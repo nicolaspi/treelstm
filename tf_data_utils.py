@@ -254,7 +254,6 @@ def build_labelized_batch_trees(data, mini_batch_size):
         batch = labels[-mini_batch_size:]
         del labels[-mini_batch_size:]
         labels_batches.append(np.array(batch))
-        print np.array(batch).shape
     tree_batches = build_batch_trees(trees, mini_batch_size)
     return zip(tree_batches, labels_batches)
 

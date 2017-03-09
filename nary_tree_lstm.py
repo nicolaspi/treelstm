@@ -23,9 +23,9 @@ class NarytreeLSTM(object):
         with tf.variable_scope("Embed", regularizer=None):
 
             if config.embeddings is not None:
-                initializer = config.embeddings
+                initializer = np.concatenate((np.zeros((1,config.emb_dim)),config.embeddings), axis=0)
             else:
-                initializer = tf.random_uniform((config.num_emb, config.emb_dim), -0.05, 0.05)
+                initializer = tf.concat([tf.zeros((1,config.emb_dim)), tf.random_uniform((config.num_emb, config.emb_dim), -0.05, 0.05)], axis=0)
             self.embedding = tf.Variable(initial_value=initializer, trainable=config.trainable_embeddings,
                                          dtype='float32')
 
@@ -70,7 +70,7 @@ class NarytreeLSTM(object):
         #print batch_sample.scatter_indices
         #print batch_sample.prefixes
         return {
-        self.observables : batch_sample.observables,
+        self.observables : batch_sample.one_offset_observables,
         self.masks : batch_sample.masks,
         self.children_offsets : batch_sample.children_offsets,
         self.flows : batch_sample.flows,
@@ -141,7 +141,7 @@ class NarytreeLSTM(object):
 
                 observable = tf.squeeze(tf.slice(self.observables, idxvar_0, one_flow))
 
-                observable = tf.Print(observable, [flow, observable, mask], None, None, 300)
+                #observable = tf.Print(observable, [flow, observable, mask], None, None, 300)
                 input_embed = tf.multiply(tf.nn.embedding_lookup(self.embedding, observable), mask)
 
                 out_ += tf.cond(tf.less(children_offset,0),
@@ -228,7 +228,7 @@ class SoftMaxNarytreeLSTM(object):
 
     def train_epoch(self, data, session):
         from random import shuffle
-        #shuffle(data)
+        shuffle(data)
         for batch in data:
             self.train(batch[0], batch[1], session)
 

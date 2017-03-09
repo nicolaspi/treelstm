@@ -31,7 +31,7 @@ class Config(object):
     emb_lr = 0.0
     reg=0.00001
 
-    batch_size = 25
+    batch_size = 200
     #num_steps = 10
     maxseqlen = None
     maxnodesize = None

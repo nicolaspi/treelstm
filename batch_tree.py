@@ -8,6 +8,7 @@ class BatchTreeSample(object):
         self.prefixes = p
         self.suffixes = s
         self.observables = o
+        self.one_offset_observables = o + 1
         self.masks = m
         self.flows = f
         self.children_offsets = c

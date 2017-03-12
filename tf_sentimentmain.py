@@ -24,14 +24,14 @@ class Config(object):
     output_dim=None
     degree = 2
     num_labels = 3
-    num_epochs = 100
+    num_epochs = 200
     early_stopping = 2
     dropout = 0.0
-    lr = 0.2
+    lr = 0.1
     emb_lr = 0.0
     reg=0.00001
 
-    batch_size = 200
+    batch_size = 500
     #num_steps = 10
     maxseqlen = None
     maxnodesize = None
@@ -72,7 +72,8 @@ def train2():
     random.seed()
     np.random.seed()
 
-    train_set, dev_set, test_set
+    from random import shuffle
+    shuffle(train_set)
     train_set = utils.build_labelized_batch_trees(train_set, config.batch_size)
     dev_set = utils.build_labelized_batch_trees(dev_set, config.batch_size)
     test_set = utils.build_labelized_batch_trees(test_set, config.batch_size)
@@ -97,12 +98,17 @@ def train2():
                 print 'epoch', epoch
                 avg_loss=0.0
                 model.train_epoch(train_set[:],sess)
+
+                print "Training time per epoch is {0}".format(
+                    time.time() - start_time)
+
+                print 'validation score'
                 model.test(dev_set,sess)
 
-                print "time per epoch is {0}".format(
-                    time.time()-start_time)
-            test_score = evaluate(model,test_set,sess)
-            print test_score,'test_score'
+
+            print 'test_score'
+            model.test(test_set,sess)
+
 
 
 def train(restore=False):
@@ -161,6 +167,10 @@ def train(restore=False):
                 avg_loss = train_epoch(model, train_set,sess)
                 print 'avg loss', avg_loss
 
+                print "Training time per epoch is {0}".format(
+                    time.time() - start_time)
+
+
                 dev_score=evaluate(model,dev_set,sess)
                 print 'dev-score', dev_score
 
@@ -172,8 +182,6 @@ def train(restore=False):
                 if epoch -best_valid_epoch > config.early_stopping:
                     break
 
-                print "time per epochis {0}".format(
-                    time.time()-start_time)
             test_score = evaluate(model,test_set,sess)
             print test_score,'test_score'
 
@@ -188,7 +196,13 @@ def evaluate(model,data,sess):
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
-        restore=True
-    else:restore=False
-    train2()
+        if(sys.argv[1] == "-optimized"):
+            print "running optimized version"
+            train2()
+        else:
+            print "running not optimized version"
+            train()
+    else:
+        print "running not optimized version, launch the script with option -optimized to run the optimized one"
+        train()
 

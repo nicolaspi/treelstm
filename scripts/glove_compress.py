@@ -23,7 +23,7 @@ def write_glove_embeddings(glove_300_filepath):
                 vocab[w] = wid
                 vocab_list.append(w)
                 v = map(lambda x : fo.write(struct.pack('f', float(x))), toks[1:])
-            if count%1000==0:
+            if count%10000==0:
                 print("Words processed : " + str(count))
         map(lambda x: fv.write(x + "\n"), vocab_list)
 

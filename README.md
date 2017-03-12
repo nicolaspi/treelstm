@@ -8,7 +8,7 @@ This implementation builds a meta-tree per minibatch that aggregates all its sam
 A meta-tree is then processed heightwise. Each nodes with a given height h depends 
 only from nodes of height h-1, this allows to aggregate all matrix mutliplications within h. 
 Thus the number of matrix multiplication per mini batch can be reduced from O(MxN) to O(log(N)) where M is the mini batch size and N the number of nodes.
-The result is a training time 70x faster with the compared model : https://github.com/sapruash/RecursiveNN.
+The result is a training time 70x faster with the reference model : https://github.com/sapruash/RecursiveNN.
 
 Usage :
 

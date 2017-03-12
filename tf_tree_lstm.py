@@ -60,7 +60,6 @@ class tf_NarytreeLSTM(object):
         self.treestr = tf.placeholder(tf.int32,[dim1,dim2,2],name='tree')
         self.labels = tf.placeholder(tf.int32,[dim1,dim2],name='labels')
         self.dropout = tf.placeholder(tf.float32,name='dropout')
-
         self.n_inodes = tf.reduce_sum(tf.to_int32(tf.not_equal(self.treestr,-1)),[1,2])
         self.n_inodes = self.n_inodes/2
 
@@ -225,7 +224,7 @@ class tf_NarytreeLSTM(object):
 
         l1=tf.nn.sparse_softmax_cross_entropy_with_logits(
             logits=logits,labels=labels)
-        loss=tf.reduce_mean(l1,[0])
+        loss=tf.reduce_sum(l1,[0])
         return loss
 
     def calc_batch_loss(self,batch_loss):
@@ -288,7 +287,7 @@ class tf_NarytreeLSTM(object):
 
             loss,bloss,_,_=sess.run([self.loss,self.batch_loss, self.train_op1,self.train_op2],feed_dict=feed)
             #sess.run(self.train_op,feed_dict=feed)
-            print np.mean(bloss)
+            #print np.mean(bloss)
             losses.append(loss)
             avg_loss=np.mean(losses)
             sstr='avg loss %.2f at example %d of %d\r' % (avg_loss, i, len(data))
@@ -323,7 +322,8 @@ class tf_NarytreeLSTM(object):
                 if y[i]==v:num_correct+=1
                 total_data+=1
             #break
-
+        print "total_data", total_data
+        print "num_correct", num_correct
         acc=float(num_correct)/float(total_data)
         return acc
 

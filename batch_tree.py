@@ -1,20 +1,21 @@
-import Queue
 import numpy as np
 import collections
 
 class BatchTreeSample(object):
     def __init__(self, tree):
-        o, m, f, p, s, c, sc, l, r = tree.build_batch_tree_sample()
-        self.prefixes = p
-        self.suffixes = s
-        self.observables = o
-        self.one_offset_observables = o + 1
-        self.masks = m
-        self.flows = f
-        self.children_offsets = c
-        self.scatter_indices = sc
-        self.labels = l
-        self.root_labels = r
+        observables, flows, input_scatter, scatter_out, scatter_in, scatter_in_indices, labels, observables_indices, out_indices, child_scatter_indices, nodes_count = tree.build_batch_tree_sample()
+        self.observables = observables
+        self.flows = flows
+        self.input_scatter = input_scatter
+        self.scatter_out = scatter_out
+        self.scatter_in = scatter_in
+        self.scatter_in_indices = scatter_in_indices
+        self.labels = labels
+        self.observables_indices = observables_indices
+        self.out_indices = out_indices
+        self.root_labels = labels[out_indices[-2]:out_indices[-1]]
+        self.child_scatter_indices = child_scatter_indices
+        self.nodes_count = nodes_count
 
 class BatchTree(object):
 
@@ -51,43 +52,81 @@ class BatchTree(object):
                 self.scatter_indices.append(scatter_indice)
 
     def build_batch_tree_sample(self):
-        q = collections.deque([self.root])
-        flows = collections.deque([])
-        prefixes = collections.deque([])
-        sufixes = collections.deque([])
-        child_offsets = collections.deque([])
-        scatter_indices = collections.deque([])
-        masks = collections.deque([])
-        observables = collections.deque([])
-        labels = collections.deque([])
+        q = collections.deque([(self.root,0)])
+        batch_levels = dict()
         max_flow = len(self.root.samples_values)
+        max_level = 0
         while q:
-            node = q.popleft()
-            zero_filling = np.zeros((1,max_flow - len(node.samples_values)))
-            mask = np.concatenate([(1.0 * (np.array((node.samples_values)) >= 0)).reshape((1,len(node.samples_values))),zero_filling],axis=1)
-            masks.appendleft(mask)
-            flows.appendleft(len(node.samples_values))
-            prefixes.appendleft(node.flow_prefix)
-            sufixes.appendleft(0 if node.parent is None else (len(self.root.samples_values)- (len(node.samples_values) + node.flow_prefix))
-                                )
-            observable = np.concatenate([np.array(node.samples_values).reshape((1,len(node.samples_values))),zero_filling], axis=1)
-            observables.appendleft(observable)
-            scatter_indices.appendleft(np.concatenate([np.array(node.scatter_indices).reshape((1,len(node.scatter_indices))),zero_filling], axis=1))
-            labels.appendleft(node.labels_values)
-            if node.children:
-                child_offsets.appendleft([len(q)])
-                q.extend(node.children)
+            node, level = q.popleft()
+            max_level = level
+            mask = np.array(node.samples_values) >= 0#.reshape((1,len(node.samples_values)))
+            observable = np.array(node.samples_values)[np.array(node.samples_values) >= 0]#.reshape((1, len(node.samples_values)))
+            scatter_out= np.array(node.scatter_indices)#.reshape((1, len(node.scatter_indices)))
+            labels= np.array(node.labels_values)#.reshape((1, len(node.labels_values)))
+
+            if(level in batch_levels):
+                level_dict = batch_levels[level]
+                level_dict["mask"].append(mask)
+                level_dict["observables"].append(observable)
+                level_dict["scatter_out"].append(scatter_out + max_flow*len(level_dict["scatter_out"]))
+                level_dict["flow"] += len(node.samples_values)
+                level_dict["labels"].append(labels)
             else:
-                child_offsets.appendleft([-1])
-        observables = np.concatenate(observables,axis=0).astype(dtype=np.int32)
-        labels = np.concatenate(labels, axis=0).astype(dtype=np.int32)
-        scatter_indices = np.concatenate(scatter_indices, axis=0).astype(dtype=np.int32)
-        masks = np.concatenate(masks, axis=0).astype(dtype=np.int32)
-        flows = np.array(flows)
-        prefixes = np.array(prefixes)
-        sufixes = np.array(sufixes)
-        child_offsets = np.concatenate(child_offsets, axis=0)
-        return observables, masks, flows, prefixes, sufixes, child_offsets, scatter_indices, labels, self.root.labels_values
+                level_dict = dict()
+                level_dict["mask"] = collections.deque([mask])
+                level_dict["observables"] = collections.deque([observable])
+                level_dict["flow"] = len(node.samples_values)
+                level_dict["scatter_out"] = collections.deque([scatter_out])
+                level_dict["labels"] = collections.deque([labels])
+                level_dict["childs_transpose_scatter"] = collections.deque([])
+                level_dict["scatter_in"] = collections.deque([])
+                level_dict["childs_transpose_scatter_offset"] = 0
+                level_dict["scatter_in_offset"] = 0
+                batch_levels[level] = level_dict
+
+            if node.children:
+                q.extend(zip(node.children, [level+1]*len(node.children)))
+                c = node.children[0]
+                childs_info = np.arange(len(c.samples_values)*len(node.children)).reshape(len(c.samples_values),len(node.children)).transpose().reshape(-1) + batch_levels[level]["childs_transpose_scatter_offset"]
+                batch_levels[level]["scatter_in"].append(np.array(c.scatter_indices) + batch_levels[level]["scatter_in_offset"])
+                batch_levels[level]["childs_transpose_scatter"].append(childs_info)
+                batch_levels[level]["childs_transpose_scatter_offset"] = childs_info[-1] + 1
+
+            batch_levels[level]["scatter_in_offset"] += len(node.samples_values)
+
+        max_level += 1
+        input_scatter = []
+        observables = []
+        scatter_out = []
+        scatter_in = []
+        childs_transpose_scatter = []
+        labels = []
+        nodes_count = np.zeros(max_level).astype(dtype=np.int32)
+        observables_indices = np.zeros(max_level+1).astype(dtype=np.int32)
+        out_indices = np.zeros(max_level + 1).astype(dtype=np.int32)
+        flows = np.zeros(max_level).astype(dtype=np.int32)
+        scatter_in_indices = np.zeros(max_level).astype(dtype=np.int32)
+        levels = range(max_level)
+        levels.reverse()
+        for l,i in zip(range(max_level),levels):
+            level_dict = batch_levels[i]
+            mask_level = np.concatenate(level_dict["mask"], axis=0)
+            input_scatter_level = np.arange(len(mask_level))[mask_level]
+            input_scatter = np.concatenate([input_scatter, input_scatter_level], axis=0)
+            observables = np.concatenate([observables, np.concatenate(level_dict["observables"], axis=0).astype(dtype=np.int32)], axis=0)
+            observables_indices[l+1] = observables_indices[l] + len(input_scatter_level)
+            out_indices[l + 1] = out_indices[l] + level_dict["flow"]
+            flows[l] = level_dict["flow"]
+            nodes_count[l] = len(level_dict["observables"])
+            scatter_out = np.concatenate([scatter_out, np.concatenate(level_dict["scatter_out"], axis=0).astype(dtype=np.int32)], axis=0)
+            if l > 0:
+                childs_transpose_scatter = np.concatenate([childs_transpose_scatter, np.concatenate(level_dict["childs_transpose_scatter"], axis=0).astype(dtype=np.int32)], axis=0)
+                scatter_in_level = np.concatenate(level_dict["scatter_in"], axis=0).astype(dtype=np.int32)
+                scatter_in_indices[l] = scatter_in_indices[l-1] + len(scatter_in_level)
+                scatter_in = np.concatenate(
+                    [scatter_in, scatter_in_level], axis=0)
+            labels = np.concatenate([labels, np.concatenate(level_dict["labels"], axis=0).astype(dtype=np.int32)], axis=0)
+        return observables, flows, input_scatter, scatter_out, scatter_in, scatter_in_indices, labels, observables_indices, out_indices, childs_transpose_scatter, nodes_count
 
     @staticmethod
     def empty_tree():
@@ -150,33 +189,47 @@ def tree_to_matrice_test():
     # tree.root.add_sample(1)
     # tree.root.add_sample(1)
 
-    tree.root.add_sample(-1, None)
-    tree.root.expand_or_add_child(-1, None, 0)
-    tree.root.expand_or_add_child(1, None, 1)
-    tree.root.children[0].expand_or_add_child(1, None, 0)
-    tree.root.children[0].expand_or_add_child(1, None, 1)
+    # tree.root.add_sample(-1, None)
+    # tree.root.expand_or_add_child(-1, None, 0)
+    # tree.root.expand_or_add_child(1, None, 1)
+    # tree.root.children[0].expand_or_add_child(1, None, 0)
+    # tree.root.children[0].expand_or_add_child(1, None, 1)
+    #
+    # tree.root.add_sample(-1, None)
+    # tree.root.expand_or_add_child(2, None, 0)
+    # tree.root.expand_or_add_child(2, None, 1)
+    #
+    # tree.root.add_sample(-1, None)
+    # tree.root.expand_or_add_child(-1, None, 0)
+    # tree.root.expand_or_add_child(3, None, 1)
+    # tree.root.children[0].expand_or_add_child(3, None, 0)
+    # tree.root.children[0].expand_or_add_child(3, None, 1)
+    # tree.root.children[1].expand_or_add_child(3, None, 0)
+    # tree.root.children[1].expand_or_add_child(3, None, 1)
 
-    tree.root.add_sample(-1, None)
-    tree.root.expand_or_add_child(2, None, 0)
-    tree.root.expand_or_add_child(2, None, 1)
+    #tree.root.add_sample(7, 1)
 
-    tree.root.add_sample(-1, None)
-    tree.root.expand_or_add_child(-1, None, 0)
-    tree.root.expand_or_add_child(3, None, 1)
-    tree.root.children[0].expand_or_add_child(3, None, 0)
-    tree.root.children[0].expand_or_add_child(3, None, 1)
+    tree.root.add_sample(-1, 1)
+    tree.root.expand_or_add_child(1, 1, 0)
+    tree.root.expand_or_add_child(-1, 1, 1)
+    tree.root.children[1].expand_or_add_child(3, 0, 0)
+    tree.root.children[1].expand_or_add_child(3, 0, 1)
+    #tree.root.children[1].expand_or_add_child(3, 0, 0)
+    #tree.root.children[1].expand_or_add_child(3, 0, 1)
 
+    observables, flows, input_scatter, scatter_out, scatter_in, scatter_in_indices, labels, observables_indices, out_indices, childs_transpose_scatter, nodes_count = tree.build_batch_tree_sample()
 
-    o, m, f, p, s, c, sc, l, r =  tree.build_batch_tree_sample()
-    print o
-    print m
-    print f
-    print p
-    print s
-    print c
-    print sc
-    print l
-    print r
+    print observables, "observables"
+    print observables_indices, "observables_indices"
+    print flows, "flows"
+    print input_scatter, "input_scatter"
+    print scatter_out, "scatter_out"
+    print scatter_in, "scatter_in"
+    print scatter_in_indices, "scatter_in_indices"
+    print labels , "labels"
+    print out_indices, "out_indices"
+    print childs_transpose_scatter , "childs_transpose_scatter"
+    print nodes_count, "nodes_count"
 
 if __name__=='__main__':
     tree_to_matrice_test()

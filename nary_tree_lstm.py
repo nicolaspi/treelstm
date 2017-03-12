@@ -5,17 +5,6 @@ from sklearn import metrics
 import collections
 
 
-class BatchSample(object):
-    def __init__(self, tree):
-        o, m, f, p, s, c = tree.build_batch_tree_sample()
-        self.prefixes = p
-        self.suffixes = s
-        self.observables = o
-        self.masks = m
-        self.flows = f
-        self.children_offsets = c
-
-
 class NarytreeLSTM(object):
     def __init__(self, config=None):
         self.config = config
@@ -23,9 +12,9 @@ class NarytreeLSTM(object):
         with tf.variable_scope("Embed", regularizer=None):
 
             if config.embeddings is not None:
-                initializer = np.concatenate((np.zeros((1,config.emb_dim)),config.embeddings), axis=0)
+                initializer = config.embeddings
             else:
-                initializer = tf.concat([tf.zeros((1,config.emb_dim)), tf.random_uniform((config.num_emb, config.emb_dim), -0.05, 0.05)], axis=0)
+                initializer = tf.random_uniform((config.num_emb, config.emb_dim))
             self.embedding = tf.Variable(initial_value=initializer, trainable=config.trainable_embeddings,
                                          dtype='float32')
 
@@ -48,37 +37,40 @@ class NarytreeLSTM(object):
 
 
 
-            self.observables = tf.placeholder(tf.int32, shape=[None, None])
-            self.scatter_indices = tf.placeholder(tf.int32, shape=[None, None])
-            self.masks = tf.placeholder(tf.float32, shape=[None, None])
-            self.children_offsets = tf.placeholder(tf.int32, shape=[None, None])
+            self.observables = tf.placeholder(tf.int32, shape=[None])
             self.flows = tf.placeholder(tf.int32, shape=[None])
-            self.prefixes = tf.placeholder(tf.int32, shape=[None])
-            self.suffixes = tf.placeholder(tf.int32, shape=[None])
-            self.children_offsets = tf.placeholder(tf.int32, shape=[None])
-            self.tree_size = tf.placeholder(tf.int32, shape=[])
+            self.input_scatter = tf.placeholder(tf.int32, shape=[None])
+            self.observables_indices = tf.placeholder(tf.int32, shape=[None])
+            self.out_indices = tf.placeholder(tf.int32, shape=[None])
+            self.scatter_out = tf.placeholder(tf.int32, shape=[None])
+            self.scatter_in = tf.placeholder(tf.int32, shape=[None])
+            self.scatter_in_indices = tf.placeholder(tf.int32, shape=[None])
             self.batch_size = tf.placeholder(tf.int32, shape=[])
-
-
+            self.tree_height = tf.placeholder(tf.int32, shape=[])
+            self.child_scatter_indices = tf.placeholder(tf.int32, shape=[None])
+            self.nodes_count = tf.placeholder(tf.int32, shape=[None])
             self.input_embed = tf.nn.embedding_lookup(self.embedding, self.observables)
-
 
             # error when one node only in the graph
             self.training_variables = [self.U, self.W, self.b, self.bf]
 
     def get_feed_dict(self, batch_sample):
-        #print batch_sample.scatter_indices
-        #print batch_sample.prefixes
+        #print batch_sample.scatter_in
+        #print batch_sample.scatter_in_indices
+        #print batch_sample.flows, "flows"
         return {
-        self.observables : batch_sample.one_offset_observables,
-        self.masks : batch_sample.masks,
-        self.children_offsets : batch_sample.children_offsets,
+        self.observables : batch_sample.observables,
         self.flows : batch_sample.flows,
-        self.prefixes : batch_sample.prefixes,
-        self.suffixes : batch_sample.suffixes,
-        self.tree_size : len(batch_sample.flows),
-        self.batch_size: batch_sample.flows[-1],
-        self.scatter_indices : batch_sample.scatter_indices
+        self.input_scatter : batch_sample.input_scatter,
+        self.observables_indices : batch_sample.observables_indices,
+        self.out_indices: batch_sample.out_indices,
+        self.tree_height: len(batch_sample.out_indices)-1,
+        self.batch_size: batch_sample.out_indices[-1] - batch_sample.out_indices[-2],
+        self.scatter_out: batch_sample.scatter_out,
+        self.scatter_in: batch_sample.scatter_in,
+        self.scatter_in_indices: batch_sample.scatter_in_indices,
+        self.child_scatter_indices: batch_sample.child_scatter_indices,
+        self.nodes_count: batch_sample.nodes_count
         }
 
     def get_output(self):
@@ -96,90 +88,130 @@ class NarytreeLSTM(object):
             b = tf.get_variable("b", [3 * self.config.hidden_dim])
             bf = tf.get_variable("bf", [self.config.hidden_dim])
 
-            child_indices_range = tf.constant(np.arange(self.config.degree), dtype=tf.int32)
             nbf = tf.tile(bf, [self.config.degree])
 
-            nodes_h_unscattered = tf.TensorArray(tf.float32, size=self.tree_size, clear_after_read=False)
-            nodes_h = tf.TensorArray(tf.float32, size = self.tree_size, clear_after_read=False)
-            nodes_c = tf.TensorArray(tf.float32, size = self.tree_size, clear_after_read=False)
+            nodes_h_scattered = tf.TensorArray(tf.float32, size=self.tree_height, clear_after_read=False)
+            nodes_h = tf.TensorArray(tf.float32, size = self.tree_height, clear_after_read=False)
+            nodes_c = tf.TensorArray(tf.float32, size = self.tree_height, clear_after_read=False)
 
             const0f = tf.constant([0], dtype=tf.float32)
             idx_var = tf.constant(0, dtype=tf.int32)
+            hidden_shape = tf.constant([-1, self.config.hidden_dim * self.config.degree], dtype=tf.int32)
+            out_shape = tf.stack([-1,self.batch_size, self.config.hidden_dim], 0)
 
-            def _recurrence(nodes_h, nodes_c, nodes_h_unscattered, idx_var):
+            def _recurrence(nodes_h, nodes_c, nodes_h_scattered, idx_var):
                 out_ = tf.concat([nbf, b], axis=0)
                 idx_var_dim1 = tf.expand_dims(idx_var, 0)
-                idxvar_0 = tf.concat([idx_var_dim1, [0]],0)
+                prev_idx_var_dim1 = tf.expand_dims(idx_var-1, 0)
 
-                flow = tf.to_int32(tf.gather(self.flows, idx_var))
-                one_flow = tf.concat([[1], tf.expand_dims(flow, 0)], 0)
-                flow_slice = tf.concat([[-1],  tf.expand_dims(flow, 0), [-1]], 0)
-                flow_slice_2 = tf.concat([tf.expand_dims(flow, 0), [-1]], 0)
+                observables_indice_begin, observables_indice_end = tf.split(tf.slice(self.observables_indices, idx_var_dim1, [2]), 2)
+                observables_size = observables_indice_end - observables_indice_begin
+                out_indice_begin, out_indice_end = tf.split(
+                    tf.slice(self.out_indices, idx_var_dim1, [2]), 2)
+                out_size = out_indice_end - out_indice_begin
+                flow = tf.slice(self.flows, idx_var_dim1, [1])
+                w_scatter_shape = tf.concat([flow, [self.config.hidden_dim]], axis=0)
+                u_scatter_shape = tf.concat([flow, [self.config.hidden_dim * (3 + self.config.degree)]], axis=0)
+                c_scatter_shape = tf.concat([flow, [self.config.hidden_dim * self.config.degree]],axis=0)
 
-                # Child indices:
-                children_offset = tf.to_int32(tf.gather(self.children_offsets, idx_var))
-                gather_offsets = child_indices_range + idx_var - children_offset - self.config.degree
 
-                conc_hs = tf.cond(tf.less(children_offset,0),
-                                  lambda: const0f,
-                                  lambda : tf.reshape(tf.concat(tf.split(tf.slice(
-                                                                         nodes_h.gather(gather_offsets)
-                                                                         , [0,0,0], flow_slice)
-                                      , self.config.degree), axis=2), flow_slice_2)
-                                  )
-                conc_cs = tf.cond(tf.less(children_offset,0),
-                                  lambda: const0f,
-                                  lambda : tf.reshape(tf.concat(tf.split(tf.slice(
-                                                                         nodes_c.gather(gather_offsets)
-                                                                         , [0,0,0], flow_slice)
-                                      , self.config.degree), axis=2), flow_slice_2)
-                                  )
+                def compute_indices():
+                    prev_level_indice_begin, prev_level_indice_end = tf.split(
+                        tf.slice(self.out_indices, prev_idx_var_dim1, [2]), 2)
+                    prev_level_indice_size = prev_level_indice_end - prev_level_indice_begin
+                    scatter_indice_begin, scatter_indice_end = tf.split(
+                        tf.slice(self.scatter_in_indices, prev_idx_var_dim1, [2]), 2)
+                    scatter_indice_size = scatter_indice_end - scatter_indice_begin
+                    child_scatters = tf.slice(self.child_scatter_indices, prev_level_indice_begin, prev_level_indice_size)
+                    child_scatters = tf.reshape(child_scatters, tf.concat([prev_level_indice_size, [-1]], 0))
+                    return scatter_indice_begin, scatter_indice_size, child_scatters
 
-                mask = tf.slice(self.masks, idxvar_0, one_flow)
-                mask_sum = tf.to_int32(tf.reduce_sum(mask))
-                mask = tf.transpose(tf.to_float(tf.tile(mask,[self.config.emb_dim, 1])))
+                def hs_compute():
+                    scatter_indice_begin, scatter_indice_size, child_scatters = compute_indices()
 
-                observable = tf.squeeze(tf.slice(self.observables, idxvar_0, one_flow))
+                    h = nodes_h.read(idx_var - 1)
+                    hs = tf.scatter_nd(child_scatters,h,tf.shape(h), name=None)
+                    hs = tf.reshape(hs, hidden_shape)
+                    out = tf.matmul(hs, U)
 
-                #observable = tf.Print(observable, [flow, observable, mask], None, None, 300)
-                input_embed = tf.multiply(tf.nn.embedding_lookup(self.embedding, observable), mask)
+                    scatters_in = tf.slice(self.scatter_in, scatter_indice_begin, scatter_indice_size)
+                    scatters_in = tf.reshape(scatters_in, tf.concat([scatter_indice_size, [-1]], 0))
+                    #scatters_in = tf.Print(scatters_in, [idx_var, tf.shape(hs), u_scatter_shape, scatters_in], "hs", 300, 300)
+                    out = tf.scatter_nd(scatters_in, out, u_scatter_shape, name=None)
+                    return out
 
-                out_ += tf.cond(tf.less(children_offset,0),
-                                  lambda: const0f,
-                                  lambda: tf.matmul(conc_hs, U)
-                                  )
-                out_ += tf.cond(tf.less(0, mask_sum),
-                               lambda: tf.tile(tf.matmul(input_embed, W), [1,3 + self.config.degree]),
+                def cs_compute():
+                    scatter_indice_begin, scatter_indice_size, child_scatters = compute_indices()
+
+                    c = nodes_c.read(idx_var - 1)
+                    cs = tf.scatter_nd(child_scatters, c, tf.shape(c), name=None)
+                    cs = tf.reshape(cs, hidden_shape)
+
+                    scatters_in = tf.slice(self.scatter_in, scatter_indice_begin, scatter_indice_size)
+                    scatters_in = tf.reshape(scatters_in, tf.concat([scatter_indice_size, [-1]], 0))
+                    #scatters_in = tf.Print(scatters_in, [idx_var, tf.shape(cs), c_scatter_shape, scatters_in], "cs",
+                    #                       300, 300)
+                    cs = tf.scatter_nd(scatters_in, cs, c_scatter_shape, name=None)
+                    return cs
+
+                out_ += tf.cond(tf.less(0,idx_var),
+                             lambda: hs_compute(),
+                             lambda: const0f
+                             )
+                cs = tf.cond(tf.less(0,idx_var),
+                             lambda: cs_compute(),
+                             lambda: const0f
+                             )
+
+
+                observable = tf.squeeze(tf.slice(self.observables, observables_indice_begin, observables_size))
+
+
+                input_embed = tf.reshape(tf.nn.embedding_lookup(self.embedding, observable),[-1,self.config.emb_dim])
+
+                def compute_input():
+                    out = tf.matmul(input_embed, W)
+
+                    input_scatter = tf.slice(self.input_scatter, observables_indice_begin, observables_size)
+                    input_scatter = tf.reshape(input_scatter, tf.concat([observables_size, [-1]], 0))
+                    out = tf.scatter_nd(input_scatter, out, w_scatter_shape, name=None)
+                    out = tf.tile(out, [1, 3 + self.config.degree])
+                    return out
+
+                out_ += tf.cond(tf.less(0, tf.squeeze(observables_size)),
+                               lambda: compute_input(),
                                lambda: const0f)
-
 
                 v = tf.split(out_, 3 + self.config.degree, axis=1)
                 vf = tf.sigmoid(tf.concat(v[:self.config.degree], axis=1))
-                c = tf.cond(tf.less(children_offset,0),
-                             lambda: tf.tanh(v[self.config.degree+2]),
-                             lambda: tf.multiply(tf.sigmoid(v[self.config.degree]),tf.tanh(v[self.config.degree+2])) + tf.reduce_sum(
-                                 tf.stack(tf.split(tf.multiply(vf, conc_cs), self.config.degree, axis=1)), axis=0)
-                             )
-                h = tf.multiply(tf.sigmoid(v[self.config.degree + 1]),tf.tanh(c))
-                nodes_h_unscattered = nodes_h_unscattered.write(idx_var, h)
-                #prefix = tf.to_int32(tf.expand_dims(tf.gather(self.prefixes, idx_var),0))
-                scatters = tf.reshape(tf.slice(self.scatter_indices, idxvar_0, one_flow), flow_slice_2)
-                #h = tf.Print(h, [v[self.config.degree], v[self.config.degree+2]], None, 300, 300)
-                h = tf.scatter_nd(scatters, h, [self.batch_size, self.config.hidden_dim], name=None)
-                c = tf.scatter_nd(scatters, c, [self.batch_size, self.config.hidden_dim], name=None)
 
+                c = tf.cond(tf.less(0,idx_var),
+                                         lambda: tf.multiply(tf.sigmoid(v[self.config.degree]),tf.tanh(v[self.config.degree+2])) + tf.reduce_sum(
+                                             tf.stack(tf.split(tf.multiply(vf, cs), self.config.degree, axis=1)), axis=0),
+                                         lambda: tf.multiply(tf.sigmoid(v[self.config.degree]),tf.tanh(v[self.config.degree+2]))
+                                         )
+
+                h = tf.multiply(tf.sigmoid(v[self.config.degree + 1]),tf.tanh(c))
 
                 nodes_h = nodes_h.write(idx_var, h)
                 nodes_c = nodes_c.write(idx_var, c)
+
+                scatters = tf.reshape(tf.slice(self.scatter_out, out_indice_begin, out_size), tf.concat([out_size, [-1]], 0))
+                # h = tf.Print(h, [v[self.config.degree], v[self.config.degree+2]], None, 300, 300)
+                node_count = tf.slice(self.nodes_count, idx_var_dim1, [1])
+                scatter_out_lenght = node_count * self.batch_size
+                scatter_out_shape = tf.stack([tf.squeeze(scatter_out_lenght), self.config.hidden_dim], 0)
+                h = tf.reshape(tf.scatter_nd(scatters, h, scatter_out_shape, name=None), out_shape)
+                nodes_h_scattered = nodes_h_scattered.write(idx_var, h)
                 idx_var = tf.add(idx_var, 1)
 
-                return nodes_h, nodes_c, nodes_h_unscattered, idx_var
-            loop_cond = lambda x, y, z, id: tf.less(id, self.tree_size)
+                return nodes_h, nodes_c, nodes_h_scattered, idx_var
+            loop_cond = lambda x, y, z, id: tf.less(id, self.tree_height)
 
-            loop_vars = [nodes_h, nodes_c, nodes_h_unscattered, idx_var]
-            nodes_h, nodes_c, nodes_h_unscattered, idx_var = tf.while_loop(loop_cond, _recurrence, loop_vars,
+            loop_vars = [nodes_h, nodes_c, nodes_h_scattered, idx_var]
+            nodes_h, nodes_c, nodes_h_scattered, idx_var = tf.while_loop(loop_cond, _recurrence, loop_vars,
                                                               parallel_iterations=1)
-            return nodes_h.stack, nodes_h_unscattered
+            return nodes_h_scattered.concat(), nodes_h
 
 class SoftMaxNarytreeLSTM(object):
     def __init__(self, config, data):
@@ -217,14 +249,14 @@ class SoftMaxNarytreeLSTM(object):
         out = tf.matmul(h, self.W) + self.b
         return tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.labels, logits=out))
 
-    def get_root_loss(self):
-        return tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.labels, logits=out))
     def train(self, batch_tree, batch_labels, session):
 
         feed_dict = {self.labels: batch_tree.labels}
         feed_dict.update(self.tree_lstm.get_feed_dict(batch_tree))
         ce,_ = session.run([self.cross_entropy, self.opt], feed_dict=feed_dict)
+        #v = session.run([self.output], feed_dict=feed_dict)
         print("cross_entropy " + str(ce))
+        #print v
 
     def train_epoch(self, data, session):
         from random import shuffle
@@ -243,7 +275,6 @@ class SoftMaxNarytreeLSTM(object):
             y_pred, y_true = session.run([y_pred, y_true], feed_dict=feed_dict)
             ys_true += y_true.tolist()
             ys_pred += y_pred.tolist()
-            print("computing... ")
         ys_true = list(ys_true)
         ys_pred = list(ys_pred)
         print "Accuracy", metrics.accuracy_score(ys_true, ys_pred)
@@ -294,7 +325,7 @@ def test_lstm_model():
     model = NarytreeLSTM(Config())
     sess = tf.InteractiveSession()
     tf.global_variables_initializer().run()
-    v = sess.run(model.get_output_debug(),feed_dict=model.get_feed_dict(sample))
+    v = sess.run(model.get_output(),feed_dict=model.get_feed_dict(sample))
     print(v)
     return 0
 
@@ -303,7 +334,7 @@ def test_softmax_model():
     class Config(object):
         num_emb = 10
         emb_dim = 3
-        hidden_dim = 8
+        hidden_dim = 1
         output_dim = None
         degree = 2
         num_epochs = 3
@@ -318,25 +349,33 @@ def test_softmax_model():
         embeddings = None
 
     tree = BatchTree.empty_tree()
-    tree.root.add_sample(-1, 1)
-    tree.root.expand_or_add_child(-1, 1, 0)
-    tree.root.expand_or_add_child(1, 1, 1)
-    tree.root.children[0].expand_or_add_child(1, 0, 0)
-    tree.root.children[0].expand_or_add_child(1, 0, 1)
 
-    tree.root.add_sample(-1, 1)
-    tree.root.expand_or_add_child(2, 1, 0)
-    tree.root.expand_or_add_child(2, 1, 1)
+    tree.root.add_sample(7, 1)
 
     tree.root.add_sample(-1, 1)
     tree.root.expand_or_add_child(-1, 1, 0)
-    tree.root.expand_or_add_child(3, 1, 1)
+    tree.root.expand_or_add_child(-1, 1, 1)
     tree.root.children[0].expand_or_add_child(3, 0, 0)
     tree.root.children[0].expand_or_add_child(3, 0, 1)
+    tree.root.children[1].expand_or_add_child(3, 0, 0)
+    tree.root.children[1].expand_or_add_child(3, 0, 1)
 
     # tree.root.add_sample(1)
     # labels = np.array([[0, 1]])
     batch_sample = BatchTreeSample(tree)
+
+    observables, flows, mask, scatter_out, scatter_in, scatter_in_indices, labels, observables_indices, out_indices, childs_transpose_scatter, nodes_count = tree.build_batch_tree_sample()
+    print observables, "observables"
+    print observables_indices, "observables_indices"
+    print flows, "flows"
+    print mask, "input_scatter"
+    print scatter_out, "scatter_out"
+    print scatter_in, "scatter_in"
+    print scatter_in_indices, "scatter_in_indices"
+    print labels, "labels"
+    print out_indices, "out_indices"
+    print childs_transpose_scatter, "childs_transpose_scatter"
+    print nodes_count, "nodes_count"
 
     labels = np.array([0,1,0,1,0])
 
@@ -345,7 +384,7 @@ def test_softmax_model():
     summarywriter = tf.summary.FileWriter('/tmp/tensortest', graph=sess.graph)
     tf.global_variables_initializer().run()
     sample = [(batch_sample, labels)]
-    for i in range(1000):
+    for i in range(100):
         model.train(batch_sample, labels, sess)
         model.test(sample, sess)
     return 0

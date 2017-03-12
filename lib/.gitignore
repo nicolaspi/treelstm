@@ -1,2 +1,4 @@
 stanford-parser/*
 stanford-tagger/*
+CollapseUnaryTransformer.class
+ConstituencyParse.class

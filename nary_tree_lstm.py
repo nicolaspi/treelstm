@@ -22,8 +22,7 @@ class NarytreeLSTM(object):
                                initializer=
                                # tf.ones_initializer(),
                                tf.contrib.layers.xavier_initializer(),
-                               regularizer=None
-                               # tf.contrib.layers.l2_regularizer(self.config.reg)
+                               regularizer=tf.contrib.layers.l2_regularizer(self.config.reg)
                                ):
 
             def calc_wt_init(self, fan_in=300):
@@ -32,8 +31,8 @@ class NarytreeLSTM(object):
 
             self.U = tf.get_variable("U", [config.hidden_dim * config.degree , config.hidden_dim * (3 + config.degree)], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),calc_wt_init(config.hidden_dim)))
             self.W = tf.get_variable("W", [config.emb_dim, config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.emb_dim),calc_wt_init(config.emb_dim)))
-            self.b = tf.get_variable("b", [config.hidden_dim*3], initializer=tf.constant_initializer(0.0))
-            self.bf = tf.get_variable("bf", [config.hidden_dim], initializer=tf.constant_initializer(0.0))
+            self.b = tf.get_variable("b", [config.hidden_dim*3], initializer=tf.constant_initializer(0.0), regularizer=tf.contrib.layers.l2_regularizer(0.0))
+            self.bf = tf.get_variable("bf", [config.hidden_dim], initializer=tf.constant_initializer(0.0), regularizer=tf.contrib.layers.l2_regularizer(0.0))
 
 
 
@@ -47,14 +46,16 @@ class NarytreeLSTM(object):
             self.scatter_in_indices = tf.placeholder(tf.int32, shape=[None])
             self.batch_size = tf.placeholder(tf.int32, shape=[])
             self.tree_height = tf.placeholder(tf.int32, shape=[])
+            self.dropout = tf.placeholder(tf.float32, shape=[])
             self.child_scatter_indices = tf.placeholder(tf.int32, shape=[None])
             self.nodes_count = tf.placeholder(tf.int32, shape=[None])
             self.input_embed = tf.nn.embedding_lookup(self.embedding, self.observables)
 
-            # error when one node only in the graph
             self.training_variables = [self.U, self.W, self.b, self.bf]
+            if config.trainable_embeddings:
+                self.training_variables.append( self.embedding)
 
-    def get_feed_dict(self, batch_sample):
+    def get_feed_dict(self, batch_sample, dropout = 1.0):
         #print batch_sample.scatter_in
         #print batch_sample.scatter_in_indices
         #print batch_sample.flows, "flows"
@@ -70,7 +71,8 @@ class NarytreeLSTM(object):
         self.scatter_in: batch_sample.scatter_in,
         self.scatter_in_indices: batch_sample.scatter_in_indices,
         self.child_scatter_indices: batch_sample.child_scatter_indices,
-        self.nodes_count: batch_sample.nodes_count
+        self.nodes_count: batch_sample.nodes_count,
+        self.dropout : dropout
         }
 
     def get_output(self):
@@ -192,12 +194,13 @@ class NarytreeLSTM(object):
                                          )
 
                 h = tf.multiply(tf.sigmoid(v[self.config.degree + 1]),tf.tanh(c))
-
+                h = tf.nn.dropout(h, self.dropout)
+                #h = tf.Print(h, [self.dropout, h], None, 300, 300)
                 nodes_h = nodes_h.write(idx_var, h)
                 nodes_c = nodes_c.write(idx_var, c)
 
                 scatters = tf.reshape(tf.slice(self.scatter_out, out_indice_begin, out_size), tf.concat([out_size, [-1]], 0))
-                # h = tf.Print(h, [v[self.config.degree], v[self.config.degree+2]], None, 300, 300)
+
                 node_count = tf.slice(self.nodes_count, idx_var_dim1, [1])
                 scatter_out_lenght = node_count * self.batch_size
                 scatter_out_shape = tf.stack([tf.squeeze(scatter_out_lenght), self.config.hidden_dim], 0)
@@ -214,6 +217,7 @@ class NarytreeLSTM(object):
             return nodes_h_scattered.concat(), nodes_h
 
 class SoftMaxNarytreeLSTM(object):
+
     def __init__(self, config, data):
         def calc_wt_init(self, fan_in=300):
             eps = 1.0 / np.sqrt(fan_in)
@@ -222,11 +226,11 @@ class SoftMaxNarytreeLSTM(object):
         with tf.variable_scope("Predictor",
                                initializer=
                                tf.contrib.layers.xavier_initializer(),
-                               regularizer=None
+                               regularizer=tf.contrib.layers.l2_regularizer(self.config.reg)
                                ):
             self.tree_lstm = NarytreeLSTM(config)
             self.W = tf.get_variable("W", [config.hidden_dim, config.num_labels], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),calc_wt_init(config.hidden_dim)))
-            self.b = tf.get_variable("b", [config.num_labels], initializer=tf.constant_initializer(0.0))
+            self.b = tf.get_variable("b", [config.num_labels], initializer=tf.constant_initializer(0.0), regularizer=tf.contrib.layers.l2_regularizer(0.0))
             self.labels = tf.placeholder(tf.int32, [None], name="labels")
             self.training_variables = [self.W, self.b] + self.tree_lstm.training_variables
             self.optimizer = tf.train.AdagradOptimizer(self.config.lr)
@@ -245,24 +249,30 @@ class SoftMaxNarytreeLSTM(object):
         return self.output
 
     def get_loss(self):
+        reg_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+        regpart = tf.add_n(reg_losses)
+        #regpart = tf.Print(regpart, [regpart])
         h = self.tree_lstm.get_output_unscattered().concat()
         out = tf.matmul(h, self.W) + self.b
-        return tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.labels, logits=out))
+        return tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.labels, logits=out)) + 0.5*regpart
 
     def train(self, batch_tree, batch_labels, session):
 
         feed_dict = {self.labels: batch_tree.labels}
-        feed_dict.update(self.tree_lstm.get_feed_dict(batch_tree))
+        feed_dict.update(self.tree_lstm.get_feed_dict(batch_tree, self.config.dropout))
         ce,_ = session.run([self.cross_entropy, self.opt], feed_dict=feed_dict)
         #v = session.run([self.output], feed_dict=feed_dict)
-        print("cross_entropy " + str(ce))
+        #print("cross_entropy " + str(ce))
+        return ce
         #print v
 
     def train_epoch(self, data, session):
-        from random import shuffle
-        shuffle(data)
+        #from random import shuffle
+        #shuffle(data)
+        total_error = 0.0
         for batch in data:
-            self.train(batch[0], batch[1], session)
+            total_error += self.train(batch[0], batch[1], session)
+        print 'average error :', total_error/len(data)
 
     def test(self, data, session):
         ys_true = collections.deque([])
@@ -277,12 +287,13 @@ class SoftMaxNarytreeLSTM(object):
             ys_pred += y_pred.tolist()
         ys_true = list(ys_true)
         ys_pred = list(ys_pred)
-        print "Accuracy", metrics.accuracy_score(ys_true, ys_pred)
+        score = metrics.accuracy_score(ys_true, ys_pred)
+        print "Accuracy", score
         #print "Recall", metrics.recall_score(ys_true, ys_pred)
         #print "f1_score", metrics.f1_score(ys_true, ys_pred)
         print "confusion_matrix"
         print metrics.confusion_matrix(ys_true, ys_pred)
-        # fpr, tpr, tresholds = sk.metrics.roc_curve(ys_true, ys_pred)
+        return score
 
 
 def test_lstm_model():

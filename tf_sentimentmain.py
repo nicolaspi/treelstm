@@ -24,25 +24,23 @@ class Config(object):
     output_dim=None
     degree = 2
     num_labels = 3
-    num_epochs = 200
-    early_stopping = 2
-    dropout = 0.0
-    lr = 0.1
-    emb_lr = 0.0
-    reg=0.00001
+    num_epochs = 500
 
-    batch_size = 500
-    #num_steps = 10
+
     maxseqlen = None
     maxnodesize = None
     fine_grained=False
-    trainable_embeddings=False
+    trainable_embeddings=True
     nonroot_labels=True
-    #dependency=True not supported
+
     embeddings = None
 
 def train2():
     config = Config()
+    config.batch_size = 500
+    config.lr = 1.0
+    config.dropout = 0.5
+    config.reg = 0.0001
 
     data, vocab = utils.load_sentiment_treebank(DIR, GLOVE_DIR, config.fine_grained)
    # data, vocab = utils.load_sentiment_treebank(DIR, None, config.fine_grained)
@@ -64,10 +62,6 @@ def train2():
     config.num_emb = num_emb
     config.output_dim = num_labels
 
-    config.maxseqlen = utils.get_max_len_data(data)
-    config.maxnodesize = utils.get_max_node_size(data)
-
-    print config.maxnodesize, config.maxseqlen, " maxsize"
     # return
     random.seed()
     np.random.seed()
@@ -75,8 +69,8 @@ def train2():
     from random import shuffle
     shuffle(train_set)
     train_set = utils.build_labelized_batch_trees(train_set, config.batch_size)
-    dev_set = utils.build_labelized_batch_trees(dev_set, config.batch_size)
-    test_set = utils.build_labelized_batch_trees(test_set, config.batch_size)
+    dev_set = utils.build_labelized_batch_trees(dev_set, 500)
+    test_set = utils.build_labelized_batch_trees(test_set, 500)
 
     with tf.Graph().as_default():
 
@@ -103,20 +97,26 @@ def train2():
                     time.time() - start_time)
 
                 print 'validation score'
-                model.test(dev_set,sess)
-
-
-            print 'test_score'
-            model.test(test_set,sess)
+                score = model.test(dev_set,sess)
+                if score >= best_valid_score:
+                    best_valid_score = score
+                    best_valid_epoch = epoch
+                    test_score = model.test(test_set,sess)
+                print 'test score :', test_score, 'updated', epoch - best_valid_epoch, 'epochs ago with validation score', best_valid_score
 
 
 
 def train(restore=False):
 
     config=Config()
-
+    config.batch_size = 5
+    config.lr = 0.05
     data,vocab = utils.load_sentiment_treebank(DIR,GLOVE_DIR,config.fine_grained)
     config.embeddings = vocab.embed_matrix
+    config.early_stopping = 2
+    config.reg = 0.0001
+    config.dropout = 1.0
+    config.emb_lr = 0.1
 
     train_set, dev_set, test_set = data['train'], data['dev'], data['test']
     print 'train', len(train_set)
@@ -174,16 +174,14 @@ def train(restore=False):
                 dev_score=evaluate(model,dev_set,sess)
                 print 'dev-score', dev_score
 
-                if dev_score > best_valid_score:
+                if dev_score >= best_valid_score:
                     best_valid_score=dev_score
                     best_valid_epoch=epoch
                     #saver.save(sess,'./ckpt/tree_rnn_weights')
+                    test_score = evaluate(model, test_set, sess)
+                    print 'test score :', test_score, 'updated', epoch - best_valid_epoch, 'epochs ago with validation score', best_valid_score
 
-                if epoch -best_valid_epoch > config.early_stopping:
-                    break
 
-            test_score = evaluate(model,test_set,sess)
-            print test_score,'test_score'
 
 def train_epoch(model,data,sess):
 

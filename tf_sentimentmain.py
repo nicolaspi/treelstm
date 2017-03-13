@@ -24,7 +24,7 @@ class Config(object):
     output_dim=None
     degree = 2
     num_labels = 3
-    num_epochs = 500
+    num_epochs = 50
 
 
     maxseqlen = None
@@ -42,7 +42,7 @@ def train2():
     config.lr = 0.05
     config.dropout = 0.5
     config.reg = 0.0001
-    config.emb_lr = 0.0
+    config.emb_lr = 0.02
 
 
     import collections
@@ -128,8 +128,8 @@ def train2():
 
                 print 'validation score'
                 score = test(model,dev_set,sess)
-                print 'train score'
-                test(model, train_set[:40], sess)
+                #print 'train score'
+                #test(model, train_set[:40], sess)
                 if score >= best_valid_score:
                     best_valid_score = score
                     best_valid_epoch = epoch

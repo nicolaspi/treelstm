@@ -24,7 +24,7 @@ class Config(object):
     output_dim=None
     degree = 2
     num_labels = 3
-    num_epochs = 500
+    num_epochs = 50
 
 
     maxseqlen = None
@@ -36,11 +36,41 @@ class Config(object):
     embeddings = None
 
 def train2():
+
     config = Config()
-    config.batch_size = 500
-    config.lr = 1.0
+    config.batch_size = 25
+    config.lr = 0.05
     config.dropout = 0.5
     config.reg = 0.0001
+    config.emb_lr = 0.02
+
+
+    import collections
+    import numpy as np
+    from sklearn import metrics
+
+    def test(model, data, session):
+        relevant_labels = [0, 2]
+        ys_true = collections.deque([])
+        ys_pred = collections.deque([])
+        for batch in data:
+            y_pred = model.get_output()
+            y_true = batch[0].root_labels/2
+            feed_dict = {model.labels: batch[0].root_labels}
+            feed_dict.update(model.tree_lstm.get_feed_dict(batch[0]))
+            y_pred_ = session.run([y_pred], feed_dict=feed_dict)
+            y_pred_ = np.argmax(y_pred_[0][:,relevant_labels], axis=1)
+            ys_true += y_true.tolist()
+            ys_pred += y_pred_.tolist()
+        ys_true = list(ys_true)
+        ys_pred = list(ys_pred)
+        score = metrics.accuracy_score(ys_true, ys_pred)
+        print "Accuracy", score
+        #print "Recall", metrics.recall_score(ys_true, ys_pred)
+        #print "f1_score", metrics.f1_score(ys_true, ys_pred)
+        print "confusion_matrix"
+        print metrics.confusion_matrix(ys_true, ys_pred)
+        return score
 
     data, vocab = utils.load_sentiment_treebank(DIR, GLOVE_DIR, config.fine_grained)
    # data, vocab = utils.load_sentiment_treebank(DIR, None, config.fine_grained)
@@ -97,11 +127,13 @@ def train2():
                     time.time() - start_time)
 
                 print 'validation score'
-                score = model.test(dev_set,sess)
+                score = test(model,dev_set,sess)
+                #print 'train score'
+                #test(model, train_set[:40], sess)
                 if score >= best_valid_score:
                     best_valid_score = score
                     best_valid_epoch = epoch
-                    test_score = model.test(test_set,sess)
+                    test_score = test(model,test_set,sess)
                 print 'test score :', test_score, 'updated', epoch - best_valid_epoch, 'epochs ago with validation score', best_valid_score
 
 
@@ -201,6 +233,6 @@ if __name__ == '__main__':
             print "running not optimized version"
             train()
     else:
-        print "running not optimized version, launch the script with option -optimized to run the optimized one"
+        print "running not optimized version, run with option -optimized for the optimized one"
         train()
 

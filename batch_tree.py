@@ -3,7 +3,7 @@ import collections
 
 class BatchTreeSample(object):
     def __init__(self, tree):
-        observables, flows, input_scatter, scatter_out, scatter_in, scatter_in_indices, labels, observables_indices, out_indices, child_scatter_indices, nodes_count = tree.build_batch_tree_sample()
+        observables, flows, input_scatter, scatter_out, scatter_in, scatter_in_indices, labels, observables_indices, out_indices, child_scatter_indices, nodes_count, nodes_count_per_indice = tree.build_batch_tree_sample()
         self.observables = observables
         self.flows = flows
         self.input_scatter = input_scatter
@@ -16,6 +16,7 @@ class BatchTreeSample(object):
         self.root_labels = labels[out_indices[-2]:out_indices[-1]]
         self.child_scatter_indices = child_scatter_indices
         self.nodes_count = nodes_count
+        self.nodes_count_per_indice = nodes_count_per_indice
 
 class BatchTree(object):
 
@@ -95,12 +96,12 @@ class BatchTree(object):
             batch_levels[level]["scatter_in_offset"] += len(node.samples_values)
 
         max_level += 1
-        input_scatter = []
-        observables = []
-        scatter_out = []
-        scatter_in = []
-        childs_transpose_scatter = []
-        labels = []
+        input_scatter = np.array([]).astype(dtype=np.int32)
+        observables = np.array([]).astype(dtype=np.int32)
+        scatter_out = np.array([]).astype(dtype=np.int32)
+        scatter_in = np.array([]).astype(dtype=np.int32)
+        childs_transpose_scatter = np.array([]).astype(dtype=np.int32)
+        labels = np.array([]).astype(dtype=np.int32)
         nodes_count = np.zeros(max_level).astype(dtype=np.int32)
         observables_indices = np.zeros(max_level+1).astype(dtype=np.int32)
         out_indices = np.zeros(max_level + 1).astype(dtype=np.int32)
@@ -126,7 +127,10 @@ class BatchTree(object):
                 scatter_in = np.concatenate(
                     [scatter_in, scatter_in_level], axis=0)
             labels = np.concatenate([labels, np.concatenate(level_dict["labels"], axis=0).astype(dtype=np.int32)], axis=0)
-        return observables, flows, input_scatter, scatter_out, scatter_in, scatter_in_indices, labels, observables_indices, out_indices, childs_transpose_scatter, nodes_count
+        samples_indices = scatter_out % max_flow
+        _, c = np.unique(samples_indices, return_counts=True)
+        nodes_count_per_indice = c[samples_indices]
+        return observables, flows, input_scatter, scatter_out, scatter_in, scatter_in_indices, labels, observables_indices, out_indices, childs_transpose_scatter, nodes_count, nodes_count_per_indice
 
     @staticmethod
     def empty_tree():
@@ -217,7 +221,7 @@ def tree_to_matrice_test():
     #tree.root.children[1].expand_or_add_child(3, 0, 0)
     #tree.root.children[1].expand_or_add_child(3, 0, 1)
 
-    observables, flows, input_scatter, scatter_out, scatter_in, scatter_in_indices, labels, observables_indices, out_indices, childs_transpose_scatter, nodes_count = tree.build_batch_tree_sample()
+    observables, flows, input_scatter, scatter_out, scatter_in, scatter_in_indices, labels, observables_indices, out_indices, childs_transpose_scatter, nodes_count, nodes_count_per_indice = tree.build_batch_tree_sample()
 
     print observables, "observables"
     print observables_indices, "observables_indices"
@@ -230,6 +234,7 @@ def tree_to_matrice_test():
     print out_indices, "out_indices"
     print childs_transpose_scatter , "childs_transpose_scatter"
     print nodes_count, "nodes_count"
+    print nodes_count_per_indice, "nodes_count_per_indice"
 
 if __name__=='__main__':
     tree_to_matrice_test()

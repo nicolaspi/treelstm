@@ -4,9 +4,11 @@ import sys
 import numpy as np
 import tensorflow as tf
 import random
+import copy
 
 import tf_tree_lstm
 import nary_tree_lstm
+from nary_tree_lstm_autoencoder import NarytreeLSTMAutoEncoder
 
 DIR = 'data/sst/'
 GLOVE_DIR ='data/glove/'
@@ -20,7 +22,7 @@ class Config(object):
     num_emb=None
 
     emb_dim = 300
-    hidden_dim = 150
+    hidden_dim = 300
     output_dim=None
     degree = 2
     num_labels = 3
@@ -35,15 +37,21 @@ class Config(object):
 
     embeddings = None
 
+
 def train2():
 
     config = Config()
     config.batch_size = 25
     config.lr = 0.05
-    config.dropout = 0.5
-    config.reg = 0.0001
+    config.dropout = 1.0
+    config.reg = 0.000001
     config.emb_lr = 0.02
-
+    config.pretrain = True
+    config.pretrain_num_epochs = 1000
+    config.pretrain_batch_size = 100
+    config.pretrain_lr = 0.05
+    config.pretrain_dropout = 1.0
+    config.pretrain_train_sub_trees = False
 
     import collections
     import numpy as np
@@ -72,11 +80,28 @@ def train2():
         print metrics.confusion_matrix(ys_true, ys_pred)
         return score
 
-    data, vocab = utils.load_sentiment_treebank(DIR, GLOVE_DIR, config.fine_grained)
+    fine_data, fine_vocab, pretrain_config = None, None, None
+    pretrain_train_set, pretrain_dev_set, pretrain_test_set = None, None, None
+    if config.pretrain:
+        fine_data, fine_vocab = utils.load_sentiment_treebank(DIR, GLOVE_DIR, True)
+        pretrain_config = copy.copy(config)
+        pretrain_config.embeddings = fine_vocab.embed_matrix
+        pretrain_config.batch_size = config.pretrain_batch_size
+        pretrain_config.lr = config.pretrain_lr
+        pretrain_config.trainable_embeddings = False
+        pretrain_config.dropout = config.pretrain_dropout
+        pretrain_config.train_sub_trees = config.pretrain_train_sub_trees
+
+        pretrain_train_set, pretrain_dev_set, pretrain_test_set = fine_data['train'], fine_data['dev'], fine_data[
+            'test']
+
+    data, vocab = utils.load_sentiment_treebank(DIR, GLOVE_DIR, False)
    # data, vocab = utils.load_sentiment_treebank(DIR, None, config.fine_grained)
     config.embeddings = vocab.embed_matrix
 
+
     train_set, dev_set, test_set = data['train'], data['dev'], data['test']
+    print 'pretrain train', len(pretrain_train_set)
     print 'train', len(train_set)
     print 'dev', len(dev_set)
     print 'test', len(test_set)
@@ -92,20 +117,30 @@ def train2():
     config.num_emb = num_emb
     config.output_dim = num_labels
 
-    # return
     random.seed()
     np.random.seed()
 
     from random import shuffle
     shuffle(train_set)
+
+    if pretrain_train_set:
+        shuffle(pretrain_train_set)
+        pretrain_train_set,_ = zip(*utils.build_labelized_batch_trees(pretrain_train_set, pretrain_config.batch_size))
+        pretrain_dev_set,_ = zip(*utils.build_labelized_batch_trees(pretrain_dev_set, 500))
+        pretrain_test_set,_ = zip(*utils.build_labelized_batch_trees(pretrain_test_set, 500))
+
     train_set = utils.build_labelized_batch_trees(train_set, config.batch_size)
     dev_set = utils.build_labelized_batch_trees(dev_set, 500)
     test_set = utils.build_labelized_batch_trees(test_set, 500)
 
     with tf.Graph().as_default():
 
-        #model = tf_seq_lstm.tf_seqLSTM(config)
-        model = nary_tree_lstm.SoftMaxNarytreeLSTM(config, train_set + dev_set + test_set)
+        pretrain_model = None
+        if config.pretrain:
+            with tf.variable_scope("Pretrain"):
+                pretrain_model = NarytreeLSTMAutoEncoder(pretrain_config)
+
+        model = nary_tree_lstm.SoftMaxNarytreeLSTM(config, pretrain_model.tree_lstm)
 
         init=tf.global_variables_initializer()
         best_valid_score=0.0
@@ -115,13 +150,24 @@ def train2():
         with tf.Session() as sess:
 
             sess.run(init)
+            tf.Graph.finalize(sess.graph)
 
+            if config.pretrain:
+                with tf.variable_scope("Pretrain"):
+                    for epoch in range(config.pretrain_num_epochs):
+                        start_time = time.time()
+
+                        pretrain_model.train_epoch(pretrain_train_set[:], sess)
+                        print "Pretraining time per epoch is {0}".format(
+                            time.time() - start_time)
+                        # e = pretrain_model.test(pretrain_dev_set[:], sess)
+                        # print "train error", e
 
             for epoch in range(config.num_epochs):
                 start_time = time.time()
                 print 'epoch', epoch
                 avg_loss=0.0
-                model.train_epoch(train_set[:],sess)
+                model.train_epoch(train_set[:], sess)
 
                 print "Training time per epoch is {0}".format(
                     time.time() - start_time)

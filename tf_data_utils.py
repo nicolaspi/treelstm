@@ -1,11 +1,12 @@
-
-
 from tf_treenode import tNode,processTree
 import numpy as np
 import os
 import random
 import struct
 from batch_tree import BatchTree, BatchTreeSample
+from os import listdir
+from os.path import isfile, join
+from collections import deque
 
 class Vocab(object):
 
@@ -66,7 +67,6 @@ def load_sentiment_treebank(data_dir, glove_dir, fine_grained):
     if glove_dir is not None:
         voc.compute_gloves_embedding(glove_dir)
 
-
     split_paths={}
     for split in ['train','test','dev']:
         split_paths[split]=os.path.join(data_dir,split)
@@ -80,7 +80,7 @@ def load_sentiment_treebank(data_dir, glove_dir, fine_grained):
         sentencepath=os.path.join(path,'sents.txt')
         treepath=os.path.join(path,'parents.txt')
         labelpath=os.path.join(path,'labels.txt')
-        trees=parse_trees(sentencepath,treepath,labelpath)
+        trees=parse_trees(sentencepath,  treepath, labelpath)
         if not fine_grained:
             trees=[tree for tree in trees if tree.label != 0]
         trees = [(processTree(tree,fnlist,arglist),tree.label) for tree in trees]
@@ -107,6 +107,55 @@ def load_subtitles(data_dir, only_supervised_data = False):
             trees = [tree for tree in trees if tree.label >= 0]
         data = trees
     return data,voc
+
+def load_opensubtitles(data_dir):
+
+    #fnlist=[tNode.encodetokens]
+    #arglist=[voc.encode]
+    #fnlist,arglist=[tNode.relabel],[fine_grained]
+
+    parsed_files = [os.path.splitext(os.path.basename(f))[0] for f in listdir(data_dir) if
+                    isfile(join(data_dir, f)) and os.path.splitext(os.path.basename(f))[1] == ".done"]
+
+    for f in parsed_files:
+        toks_file = join(data_dir, f + ".toks")
+        parents_file = join(data_dir, f + ".cparents")
+        if isfile(toks_file) and isfile(parents_file):
+            try:
+                parents, tokens = parse_opensub_file(toks_file, parents_file)
+            except:
+                print "Unexpected error parsing :", f
+
+
+def parse_opensub_file(toks_file, parents_file):
+    max_sentence_size = 61
+    max_parent_number = 256
+
+    def read_arrays_in_file(file, max_array_size, data_format):
+        tsize = struct.calcsize(data_format)
+        arrays = deque([])
+        with open(file, "rb") as ft:
+            while True:
+                itok = 1
+                tok_array = np.empty(max_array_size, dtype=int)
+                i = 0
+                while itok != 0:
+                    tok = ft.read(tsize)
+                    if len(tok) == tsize:
+                        itok = struct.unpack(data_format, tok)
+                        tok_array[i] = itok-1
+                        i+=1
+                    else:
+                        break
+                if i == 0:
+                    break
+                else:
+                    arrays.append(tok_array[:i])
+        return arrays
+
+    parents = read_arrays_in_file(parents_file, max_parent_number, 'c')
+    tokens = read_arrays_in_file(toks_file, max_sentence_size, 'I')
+    return parents, tokens
 
 
 def parse_trees(sentencepath, treepath, labelpath):
@@ -174,7 +223,6 @@ def parse_tree(sentence, parents, labels):
     return root
 
 def BFStree(root):
-    from collections import deque
     node=root
     leaves=[]
     inodes=[]

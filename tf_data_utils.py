@@ -108,56 +108,6 @@ def load_subtitles(data_dir, only_supervised_data = False):
         data = trees
     return data,voc
 
-def load_opensubtitles(data_dir):
-
-    #fnlist=[tNode.encodetokens]
-    #arglist=[voc.encode]
-    #fnlist,arglist=[tNode.relabel],[fine_grained]
-
-    parsed_files = [os.path.splitext(os.path.basename(f))[0] for f in listdir(data_dir) if
-                    isfile(join(data_dir, f)) and os.path.splitext(os.path.basename(f))[1] == ".done"]
-
-    for f in parsed_files:
-        toks_file = join(data_dir, f + ".toks")
-        parents_file = join(data_dir, f + ".cparents")
-        if isfile(toks_file) and isfile(parents_file):
-            try:
-                parents, tokens = parse_opensub_file(toks_file, parents_file)
-            except:
-                print "Unexpected error parsing :", f
-
-
-def parse_opensub_file(toks_file, parents_file):
-    max_sentence_size = 61
-    max_parent_number = 256
-
-    def read_arrays_in_file(file, max_array_size, data_format):
-        tsize = struct.calcsize(data_format)
-        arrays = deque([])
-        with open(file, "rb") as ft:
-            while True:
-                itok = 1
-                tok_array = np.empty(max_array_size, dtype=int)
-                i = 0
-                while itok != 0:
-                    tok = ft.read(tsize)
-                    if len(tok) == tsize:
-                        itok = struct.unpack(data_format, tok)
-                        tok_array[i] = itok-1
-                        i+=1
-                    else:
-                        break
-                if i == 0:
-                    break
-                else:
-                    arrays.append(tok_array[:i])
-        return arrays
-
-    parents = read_arrays_in_file(parents_file, max_parent_number, 'c')
-    tokens = read_arrays_in_file(toks_file, max_sentence_size, 'I')
-    return parents, tokens
-
-
 def parse_trees(sentencepath, treepath, labelpath):
     trees=[]
     with open(treepath,'r') as ft, open(
@@ -188,7 +138,8 @@ def parse_trees(sentencepath, treepath, labelpath):
 def parse_tree(sentence, parents, labels):
     nodes = {}
     parents = [p - 1 for p in parents]  #change to zero based
-    sentence=[w for w in sentence.strip().split()]
+    if isinstance(sentence, basestring):
+        sentence = [w for w in sentence.strip().split()]
     for i in xrange(len(parents)):
         if i not in nodes:
             idx = i

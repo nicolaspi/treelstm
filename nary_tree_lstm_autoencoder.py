@@ -13,14 +13,6 @@ class NarytreeLSTMAutoEncoder(object):
             return eps
         self.config = config
         self.tree_lstm = NarytreeLSTM(config)
-        with tf.variable_scope("Embed", regularizer=None):
-
-            if config.embeddings is not None:
-                initializer = config.embeddings
-            else:
-                initializer = tf.random_uniform((config.num_emb, config.emb_dim))
-            self.embedding = tf.Variable(initial_value=initializer, trainable=config.trainable_embeddings,
-                                         dtype='float32')
 
         with tf.variable_scope("Decoder",
                                initializer=
@@ -70,15 +62,35 @@ class NarytreeLSTMAutoEncoder(object):
         #self.optimizer = tf.train.GradientDescentOptimizer(self.config.lr)
         self.optimizer = tf.train.AdagradOptimizer(self.config.lr)
         self.loss = self.get_loss()
+        self.accuracy = self.get_max_prob_accuracy()
         self.opt = self.optimizer.minimize(self.loss, var_list=self.training_variables)
         self.gv = self.optimizer.compute_gradients(self.loss, var_list=[self.tree_lstm.b])
+
+    def get_max_prob_accuracy(self):
+        self.encoder_hiddens = self.tree_lstm.get_output_unscattered()
+        range = tf.range(self.start_height, self.tree_lstm.tree_height)
+        # range = tf.Print(range, [range])
+        def foldfn(accu, height):
+            pred, _, indices = self.get_outputs(height)
+            # target = tf.Print(target, [target], "target", None, 100)
+            # target = tf.Print(target, [pred], "pred", None, 100)
+
+            normalized_pred = tf.nn.l2_normalize(pred, 1)
+            normalized_embed = tf.nn.l2_normalize(self.tree_lstm.embedding,1)
+            cosinus = tf.matmul(normalized_pred, normalized_embed, False, True)
+            pred_indices = tf.to_int32(tf.argmax(cosinus, axis=1))
+            accu += tf.reduce_mean(tf.to_float(tf.equal(indices, pred_indices)))
+            return accu
+
+        accu = tf.divide(tf.foldl(foldfn, range, initializer=self.const0f), tf.to_float(self.tree_lstm.tree_height - self.start_height))
+        return accu
 
     def get_loss(self):
         self.encoder_hiddens = self.tree_lstm.get_output_unscattered()
         range = tf.range(self.start_height, self.tree_lstm.tree_height)
         #range = tf.Print(range, [range])
         def foldfn(loss, height):
-            pred, target = self.get_outputs(height)
+            pred, target, _ = self.get_outputs(height)
             #target = tf.Print(target, [target], "target", None, 100)
             #target = tf.Print(target, [pred], "pred", None, 100)
             loss += tf.reduce_sum(tf.square(target-pred))
@@ -107,6 +119,7 @@ class NarytreeLSTMAutoEncoder(object):
 
             pred_outs = tf.TensorArray(tf.float32, size=height+1, clear_after_read=False)
             target_outs = tf.TensorArray(tf.float32, size=height+1, clear_after_read=False)
+            target_indices_outs = tf.TensorArray(tf.int32, size=height + 1, clear_after_read=False)
             nodes_h = tf.TensorArray(tf.float32, size = height+2, clear_after_read=False)
             nodes_c = tf.TensorArray(tf.float32, size = height+2, clear_after_read=False)
 
@@ -119,7 +132,7 @@ class NarytreeLSTMAutoEncoder(object):
             child_size_0 = tf.constant([self.config.degree * self.config.hidden_dim], dtype = tf.int32)
 
             idx_var = height
-            def _recurrence(nodes_h, nodes_c, pred_outs, target_outs, idx_var):
+            def _recurrence(nodes_h, nodes_c, pred_outs, target_outs, target_indices_outs, idx_var):
 
                 idx_var_dim1 = tf.expand_dims(idx_var, 0)
 
@@ -128,17 +141,18 @@ class NarytreeLSTMAutoEncoder(object):
                 observables_indice_begin, observables_indice_end = tf.split(
                     tf.slice(self.tree_lstm.observables_indices, idx_var_dim1, [2]), 2)
                 observables_size = observables_indice_end - observables_indice_begin
-                observable = tf.squeeze(tf.slice(self.tree_lstm.observables, observables_indice_begin, observables_size))
-                input_embed = tf.reshape(tf.nn.embedding_lookup(self.embedding, observable), [-1, self.config.emb_dim])
+                observable = tf.slice(self.tree_lstm.observables, observables_indice_begin, observables_size)
+                target_indices_outs = target_indices_outs.write(idx_var, observable)
+                observable = tf.squeeze(observable)
+                input_embed = tf.reshape(tf.nn.embedding_lookup(self.tree_lstm.embedding, observable), [-1, self.config.emb_dim])
                 input_gather = tf.slice(self.tree_lstm.input_scatter, observables_indice_begin, observables_size)
                 target_out = tf.gather(input_embed, input_gather)
                 pred_out = tf.gather(h, input_gather)
                 for hW, hb_out in izip(self.hW, self.hb_out):
                     pred_out = tf.nn.dropout(tf.nn.relu(tf.matmul(pred_out, hW) + hb_out), self.tree_lstm.dropout)
-		pred_out = tf.matmul(pred_out, W) + b_out
+                pred_out = tf.matmul(pred_out, W) + b_out
                 pred_outs = pred_outs.write(idx_var, pred_out)
                 target_outs = target_outs.write(idx_var, target_out)
-
                 #compute hidden stuff
                 def compute_next_layer():
                     out_ = b
@@ -203,31 +217,32 @@ class NarytreeLSTMAutoEncoder(object):
                 nodes_c = nodes_c.write(idx_var, output[1])
 
                 idx_var = tf.add(idx_var, -1)
-                return nodes_h, nodes_c, pred_outs, target_outs, idx_var
-            loop_cond = lambda x, y, z, a, id: tf.less(-1, id)
+                return nodes_h, nodes_c, pred_outs, target_outs, target_indices_outs, idx_var
+            loop_cond = lambda x, y, z, a, b, id: tf.less(-1, id)
 
-            loop_vars = [nodes_h, nodes_c, pred_outs, target_outs, idx_var]
+            loop_vars = [nodes_h, nodes_c, pred_outs, target_outs, target_indices_outs, idx_var]
 
-            nodes_h, nodes_c, pred_outs, target_outs, idx_var = tf.while_loop(loop_cond, _recurrence, loop_vars,
+            nodes_h, nodes_c, pred_outs, target_outs, target_indices_outs, idx_var = tf.while_loop(loop_cond, _recurrence, loop_vars,
                                                               parallel_iterations=1)
 
             nodes_h.close()
             nodes_c.close()
             target = target_outs.concat()
             pred = pred_outs.concat()
+            target_indices = target_indices_outs.concat()
             target_outs.close()
             pred_outs.close()
+            target_indices_outs.close()
 
-            return pred,target
+            return pred,target,target_indices
 
     def train(self, batch_tree, session):
         feed_dict = self.get_feed_dict(batch_tree, False, self.config.dropout)
         e,  _ = session.run([self.loss, self.opt], feed_dict=feed_dict)
-        import random
+        #import random
         #if random.random() < 0.1:
         #    print "grad", gv
         # v = session.run([self.output], feed_dict=feed_dict)
-
         return e
 
     def train_epoch(self, data, session):
@@ -243,10 +258,17 @@ class NarytreeLSTMAutoEncoder(object):
             total_error += session.run([self.loss], feed_dict=feed_dict)[0]
         return total_error/len(data)
 
+    def test_accuracy(self, data, session):
+        total_acc = 0.0
+        for batch in data:
+            feed_dict = self.get_feed_dict(batch, True, self.config.dropout)
+            total_acc += session.run([self.accuracy], feed_dict=feed_dict)[0]
+        return total_acc / len(data)
+
 def test_model():
     class Config(object):
         num_emb = 10
-        emb_dim = 1
+        emb_dim = 5
         hidden_dim = 10
         output_dim = None
         degree = 2
@@ -260,6 +282,8 @@ def test_model():
         trainable_embeddings = False
         num_labels = 2
         embeddings = None
+        nb_hidden_layers = 0
+        train_sub_trees = False
 
     tree = BatchTree.empty_tree()
 
@@ -314,7 +338,7 @@ def test_model():
         model.train_epoch([batch_sample], sess)
         print "Training time per epoch is {0}".format(
             time.time() - start_time)
-        e = model.test([batch_sample], sess)
+        e = model.test_accuracy([batch_sample], sess)
         print "test error", e
     return 0
 

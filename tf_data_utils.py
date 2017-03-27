@@ -158,10 +158,13 @@ def parse_tree(sentence, parents, labels):
 
                 if idx < len(sentence):
                     node.word = sentence[idx]
-
+                if idx >= len(parents):
+                    print parents
                 parent = parents[idx]
                 if parent in nodes:
-                    assert len(nodes[parent].children) < 2
+                    #assert len(nodes[parent].children) < 2
+                    if not len(nodes[parent].children) < 2:
+                        print parents
                     nodes[parent].add_child(node)
                     break
                 elif parent == -1:

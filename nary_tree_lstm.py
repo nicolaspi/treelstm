@@ -3,7 +3,7 @@ from batch_tree import BatchTree, BatchTreeSample
 import numpy as np
 from sklearn import metrics
 import collections
-
+from itertools import izip
 
 class NarytreeLSTM(object):
     def __init__(self, config=None, pretrained_tree_lstm = None):
@@ -31,8 +31,24 @@ class NarytreeLSTM(object):
 
             self.U = pretrained_tree_lstm.U if pretrained_tree_lstm else tf.get_variable("U", [config.hidden_dim * config.degree , config.hidden_dim * (3 + config.degree)], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),calc_wt_init(config.hidden_dim)))
             self.W = pretrained_tree_lstm.W if pretrained_tree_lstm else tf.get_variable("W", [config.emb_dim, config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.emb_dim),calc_wt_init(config.emb_dim)))
-            self.b = pretrained_tree_lstm.b if pretrained_tree_lstm else tf.get_variable("b", [config.hidden_dim*3], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),calc_wt_init(config.hidden_dim)))#, regularizer=tf.contrib.layers.l2_regularizer(0.0))
-            self.bf = pretrained_tree_lstm.bf if pretrained_tree_lstm else tf.get_variable("bf", [config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),calc_wt_init(config.hidden_dim)))#, regularizer=tf.contrib.layers.l2_regularizer(0.0))
+            self.b = pretrained_tree_lstm.b if pretrained_tree_lstm else tf.get_variable("b", [config.hidden_dim * (3 + config.degree)], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim * (3 + config.degree)),calc_wt_init(config.hidden_dim * (3 + config.degree))))#, regularizer=tf.contrib.layers.l2_regularizer(0.0))
+            self.bo = pretrained_tree_lstm.b if pretrained_tree_lstm else tf.get_variable("bo", [config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim), calc_wt_init(config.hidden_dim)))  # , regularizer=tf.contrib.layers.l2_regularizer(0.0))
+
+            #self.bf = pretrained_tree_lstm.bf if pretrained_tree_lstm else tf.get_variable("bf", [config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),calc_wt_init(config.hidden_dim)))#, regularizer=tf.contrib.layers.l2_regularizer(0.0))
+
+            self.hU = pretrained_tree_lstm.hU if pretrained_tree_lstm else [tf.get_variable("hU" + str(i), [config.hidden_dim * (3 + config.degree) , config.hidden_dim * (3 + config.degree)], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim * (3 + config.degree)),calc_wt_init(config.hidden_dim * (3 + config.degree))))
+                       for i in range(config.nb_hidden_layers)]
+
+            self.hW = pretrained_tree_lstm.hW if pretrained_tree_lstm else [tf.get_variable("hW" + str(i), [config.hidden_dim , config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),calc_wt_init(config.hidden_dim)))
+                       for i in range(config.nb_hidden_layers)]
+
+            self.hb = pretrained_tree_lstm.hb if pretrained_tree_lstm else [tf.get_variable("hb" + str(i), [config.hidden_dim * (3 + config.degree)], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim * (3 + config.degree)), calc_wt_init(config.hidden_dim * (3 + config.degree))))
+                       for i in range(config.nb_hidden_layers)]
+
+            self.hbo = pretrained_tree_lstm.hbo if pretrained_tree_lstm else [
+                tf.get_variable("hbo" + str(i), [config.hidden_dim],
+                                initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim), calc_wt_init(config.hidden_dim)))
+                for i in range(config.nb_hidden_layers)]
 
             self.observables = tf.placeholder(tf.int32, shape=[None])
             self.flows = tf.placeholder(tf.int32, shape=[None])
@@ -50,9 +66,9 @@ class NarytreeLSTM(object):
             self.input_embed = tf.nn.embedding_lookup(self.embedding, self.observables)
             self.nodes_count_per_indice = tf.placeholder(tf.float32, shape=[None])
 
-            self.training_variables = [self.U, self.W, self.b, self.bf]
+            self.training_variables = [self.U, self.W, self.b, self.bo] + self.hb + self.hU + self.hW + self.hbo
             if config.trainable_embeddings:
-                self.training_variables.append( self.embedding)
+                self.training_variables.append(self.embedding)
 
     def get_feed_dict(self, batch_sample, dropout = 1.0):
         #print batch_sample.scatter_in
@@ -88,9 +104,7 @@ class NarytreeLSTM(object):
             W = self.W
             U = self.U
             b = self.b
-            bf = self.bf
-
-            nbf = tf.tile(bf, [self.config.degree])
+            bo = self.bo
 
             nodes_h_scattered = tf.TensorArray(tf.float32, size=self.tree_height, clear_after_read=False)
             nodes_h = tf.TensorArray(tf.float32, size = self.tree_height, clear_after_read=False)
@@ -102,7 +116,6 @@ class NarytreeLSTM(object):
             out_shape = tf.stack([-1,self.batch_size, self.config.hidden_dim], 0)
 
             def _recurrence(nodes_h, nodes_c, nodes_h_scattered, idx_var):
-                out_ = tf.concat([nbf, b], axis=0)
                 idx_var_dim1 = tf.expand_dims(idx_var, 0)
                 prev_idx_var_dim1 = tf.expand_dims(idx_var-1, 0)
 
@@ -134,7 +147,9 @@ class NarytreeLSTM(object):
                     h = nodes_h.read(idx_var - 1)
                     hs = tf.scatter_nd(child_scatters,h,tf.shape(h), name=None)
                     hs = tf.reshape(hs, hidden_shape)
-                    out = tf.matmul(hs, U)
+                    out = tf.matmul(hs, U) + b
+                    for hU, hb in izip(self.hU, self.hb):
+                        out += tf.matmul(tf.nn.dropout(tf.nn.relu(out), self.dropout), hU) + hb
 
                     scatters_in = tf.slice(self.scatter_in, scatter_indice_begin, scatter_indice_size)
                     scatters_in = tf.reshape(scatters_in, tf.concat([scatter_indice_size, [-1]], 0))
@@ -156,9 +171,9 @@ class NarytreeLSTM(object):
                     cs = tf.scatter_nd(scatters_in, cs, c_scatter_shape, name=None)
                     return cs
 
-                out_ += tf.cond(tf.less(0,idx_var),
+                out_ = tf.cond(tf.less(0, idx_var),
                              lambda: hs_compute(),
-                             lambda: const0f
+                             lambda: b
                              )
                 cs = tf.cond(tf.less(0,idx_var),
                              lambda: cs_compute(),
@@ -172,8 +187,9 @@ class NarytreeLSTM(object):
                 input_embed = tf.reshape(tf.nn.embedding_lookup(self.embedding, observable),[-1,self.config.emb_dim])
 
                 def compute_input():
-                    out = tf.matmul(input_embed, W)
-
+                    out = tf.matmul(input_embed, W) + bo
+                    for hW, hbo in izip(self.hW, self.hbo):
+                        out = tf.matmul(tf.nn.dropout(tf.nn.relu(out), self.dropout), hW) + hbo
                     input_scatter = tf.slice(self.input_scatter, observables_indice_begin, observables_size)
                     input_scatter = tf.reshape(input_scatter, tf.concat([observables_size, [-1]], 0))
                     out = tf.scatter_nd(input_scatter, out, w_scatter_shape, name=None)

@@ -3,6 +3,8 @@ from batch_tree import BatchTree, BatchTreeSample
 from nary_tree_lstm import NarytreeLSTM
 import numpy as np
 import time
+from itertools import izip
+
 
 class NarytreeLSTMAutoEncoder(object):
     def __init__(self, config=None):
@@ -29,25 +31,47 @@ class NarytreeLSTMAutoEncoder(object):
             self.U = tf.get_variable("U", [config.hidden_dim, config.hidden_dim * (2 + 2*config.degree)],
                                      initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),
                                                                                calc_wt_init(config.hidden_dim)))
+            self.hU = [tf.get_variable("hU"+str(i), [config.hidden_dim * (2 + 2*config.degree), config.hidden_dim * (2 + 2*config.degree)],
+                                     initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim * (2 + 2*config.degree)),
+                                                                               calc_wt_init(config.hidden_dim * (2 + 2*config.degree))))
+                                     for i in range(config.nb_hidden_layers)]
+
             self.W = tf.get_variable("W", [config.hidden_dim, config.emb_dim],
                                      initializer=tf.random_uniform_initializer(-calc_wt_init(config.emb_dim),
                                                                                calc_wt_init(config.emb_dim)))
+            self.hW = [tf.get_variable("hW" + str(i), [config.hidden_dim, config.hidden_dim],
+                                       initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),
+                                                                                 calc_wt_init(config.hidden_dim)))
+                       for i in range(config.nb_hidden_layers)]
+
             self.b = tf.get_variable("b", [config.hidden_dim * (2 + 2*config.degree)],
                                      initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),
-                                                                               calc_wt_init(
-                                                                                   config.hidden_dim)))  # , regularizer=tf.contrib.layers.l2_regularizer(0.0))
+                                                                               calc_wt_init(config.hidden_dim)))
+            self.hb = [tf.get_variable("hb" + str(i), [config.hidden_dim * (2 + 2*config.degree)],
+                                     initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),
+                                                                               calc_wt_init(config.hidden_dim)))
+                       for i in range(config.nb_hidden_layers)]
+
             self.b_out = tf.get_variable("b_out", [config.emb_dim],
                                      initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),
                                                                                calc_wt_init(
-                                                                                   config.hidden_dim)))  # , regularizer=tf.contrib.layers.l2_regularizer(0.0))
+                                                                                   config.hidden_dim)))
+            self.hb_out = [tf.get_variable("b_out" + str(i), [config.hidden_dim],
+                                         initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),
+                                                                                   calc_wt_init(
+                                                                                       config.hidden_dim)))
+                           for i in range(config.nb_hidden_layers)]
+            # , regularizer=tf.contrib.layers.l2_regularizer(0.0))
             self.const0f = tf.constant([0], dtype=tf.float32)
             self.start_height = tf.placeholder(tf.int32, shape=[])
 
 
-        self.training_variables = [self.U, self.W, self.b, self.b_out] + self.tree_lstm.training_variables
+        self.training_variables = [self.U, self.W, self.b, self.b_out] + self.hW + self.hU + self.hb + self.hb_out + self.tree_lstm.training_variables
+        #self.optimizer = tf.train.GradientDescentOptimizer(self.config.lr)
         self.optimizer = tf.train.AdagradOptimizer(self.config.lr)
         self.loss = self.get_loss()
-        self.gv = self.optimizer.minimize(self.loss, var_list=self.training_variables)
+        self.opt = self.optimizer.minimize(self.loss, var_list=self.training_variables)
+        self.gv = self.optimizer.compute_gradients(self.loss, var_list=[self.tree_lstm.b])
 
     def get_loss(self):
         self.encoder_hiddens = self.tree_lstm.get_output_unscattered()
@@ -108,8 +132,10 @@ class NarytreeLSTMAutoEncoder(object):
                 input_embed = tf.reshape(tf.nn.embedding_lookup(self.embedding, observable), [-1, self.config.emb_dim])
                 input_gather = tf.slice(self.tree_lstm.input_scatter, observables_indice_begin, observables_size)
                 target_out = tf.gather(input_embed, input_gather)
-                pred_out = tf.matmul(tf.gather(h, input_gather), W) + b_out
-
+                pred_out = tf.gather(h, input_gather)
+                for hW, hb_out in izip(self.hW, self.hb_out):
+                    pred_out = tf.nn.dropout(tf.nn.relu(tf.matmul(pred_out, hW) + hb_out), self.tree_lstm.dropout)
+		pred_out = tf.matmul(pred_out, W) + b_out
                 pred_outs = pred_outs.write(idx_var, pred_out)
                 target_outs = target_outs.write(idx_var, target_out)
 
@@ -126,15 +152,17 @@ class NarytreeLSTMAutoEncoder(object):
 
                     h = tf.gather(h, gather_in)
 
-
                     out_ += tf.matmul(h, U)
+
+                    for hU, hb in izip(self.hU, self.hb):
+                        out_ = tf.matmul(tf.nn.dropout(tf.nn.relu(out_), self.tree_lstm.dropout), hU) + hb
 
                     v = tf.split(out_, 2 + 2*self.config.degree, axis=1)
 
                     def compute_cf():
                         c = nodes_c.read(idx_var + 1)
                         c = tf.gather(c, gather_in)
-                        cf = tf.multiply(tf.sigmoid(v[1]),c)
+                        cf = tf.multiply(tf.sigmoid(v[1]), c)
                         cf = tf.tile(cf, [1, self.config.degree])
                         return cf
 
@@ -151,7 +179,7 @@ class NarytreeLSTMAutoEncoder(object):
 
                     #h stuff
                     o = tf.slice(out_, o_begin, child_size)
-                    hk = tf.multiply(tf.sigmoid(o), tf.tanh(ck))
+                    hk = tf.nn.dropout(tf.multiply(tf.sigmoid(o), tf.tanh(ck)), self.tree_lstm.dropout)
 
                     # gather ck and hk
                     hk = tf.reshape(hk, [-1, self.config.hidden_dim])
@@ -194,8 +222,12 @@ class NarytreeLSTMAutoEncoder(object):
 
     def train(self, batch_tree, session):
         feed_dict = self.get_feed_dict(batch_tree, False, self.config.dropout)
-        e,_ = session.run([self.loss, self.gv], feed_dict=feed_dict)
+        e,  _ = session.run([self.loss, self.opt], feed_dict=feed_dict)
+        import random
+        #if random.random() < 0.1:
+        #    print "grad", gv
         # v = session.run([self.output], feed_dict=feed_dict)
+
         return e
 
     def train_epoch(self, data, session):

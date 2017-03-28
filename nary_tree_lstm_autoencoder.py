@@ -146,7 +146,7 @@ class NarytreeLSTMAutoEncoder(object):
                 observable = tf.squeeze(observable)
                 input_embed = tf.reshape(tf.nn.embedding_lookup(self.tree_lstm.embedding, observable), [-1, self.config.emb_dim])
                 input_gather = tf.slice(self.tree_lstm.input_scatter, observables_indice_begin, observables_size)
-                target_out = tf.gather(input_embed, input_gather)
+                target_out = input_embed
                 pred_out = tf.gather(h, input_gather)
                 for hW, hb_out in izip(self.hW, self.hb_out):
                     pred_out = tf.nn.dropout(tf.nn.relu(tf.matmul(pred_out, hW) + hb_out), self.tree_lstm.dropout)

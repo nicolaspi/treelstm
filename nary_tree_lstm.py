@@ -71,9 +71,9 @@ class NarytreeLSTM(object):
                 self.training_variables.append(self.embedding)
 
     def get_feed_dict(self, batch_sample, dropout = 1.0):
-        #print batch_sample.scatter_in
-        #print batch_sample.scatter_in_indices
-        #print batch_sample.nodes_count_per_indice, "nodes_count_per_indice"
+        #print batch_sample.observables, "observables"
+        #print batch_sample.observables_indices, "observables_indices"
+        #print batch_sample.input_scatter, "input_scatter"
         return {
         self.observables : batch_sample.observables,
         self.flows : batch_sample.flows,

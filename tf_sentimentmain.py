@@ -161,8 +161,8 @@ def train2():
                         pretrain_model.train_epoch(pretrain_train_set[:], sess)
                         print "Pretraining time per epoch is {0}".format(
                             time.time() - start_time)
-                        # e = pretrain_model.test(pretrain_dev_set[:], sess)
-                        # print "train error", e
+                        e = pretrain_model.test(pretrain_dev_set[:], sess)
+                        print "dev error", e
 
             for epoch in range(config.num_epochs):
                 start_time = time.time()

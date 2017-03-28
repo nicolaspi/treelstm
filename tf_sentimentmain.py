@@ -47,7 +47,7 @@ def train2():
     config.reg = 0.000001
     config.emb_lr = 0.02
     config.pretrain = True
-    config.pretrain_num_epochs = 1000
+    config.pretrain_num_epochs = 50
     config.pretrain_batch_size = 100
     config.pretrain_lr = 0.05
     config.pretrain_dropout = 1.0
@@ -91,6 +91,7 @@ def train2():
         pretrain_config.trainable_embeddings = False
         pretrain_config.dropout = config.pretrain_dropout
         pretrain_config.train_sub_trees = config.pretrain_train_sub_trees
+        pretrain_config.nb_hidden_layers = 0
 
         pretrain_train_set, pretrain_dev_set, pretrain_test_set = fine_data['train'], fine_data['dev'], fine_data[
             'test']

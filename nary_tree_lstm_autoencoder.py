@@ -65,6 +65,13 @@ class NarytreeLSTMAutoEncoder(object):
         self.accuracy = self.get_max_prob_accuracy()
         self.opt = self.optimizer.minimize(self.loss, var_list=self.training_variables)
         self.gv = self.optimizer.compute_gradients(self.loss, var_list=[self.tree_lstm.b])
+        self.saver = tf.train.Saver(self.training_variables)
+
+    def save(self, sess, save_path):
+        self.saver.save(sess, save_path)
+
+    def restore(self, sess, save_path):
+        self.saver.restore(sess, save_path)
 
     def get_max_prob_accuracy(self):
         self.encoder_hiddens = self.tree_lstm.get_output_unscattered()
@@ -328,18 +335,33 @@ def test_model():
 
     model = NarytreeLSTMAutoEncoder(Config())
     sess = tf.InteractiveSession()
+
     summarywriter = tf.summary.FileWriter('/tmp/tensortest', graph=sess.graph)
     tf.global_variables_initializer().run()
+
     tf.Graph.finalize(sess.graph)
     sample = [(batch_sample, labels)]
 
-    for i in range(2000):
+    for i in range(100):
         start_time = time.time()
         model.train_epoch([batch_sample], sess)
         print "Training time per epoch is {0}".format(
             time.time() - start_time)
         e = model.test_accuracy([batch_sample], sess)
         print "test error", e
+
+    print "saving"
+    model.save(sess, "./test/test_save.save")
+    print "restoring"
+    model.restore(sess, "./test/test_save.save")
+    for i in range(100):
+        start_time = time.time()
+        model.train_epoch([batch_sample], sess)
+        print "Training time per epoch is {0}".format(
+            time.time() - start_time)
+        e = model.test_accuracy([batch_sample], sess)
+        print "test error", e
+
     return 0
 
 

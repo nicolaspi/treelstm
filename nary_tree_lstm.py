@@ -101,10 +101,11 @@ class NarytreeLSTM(object):
 
     def get_outputs(self):
         with tf.variable_scope("Node", reuse=True):
-            W = self.W
-            U = self.U
-            b = self.b
-            bo = self.bo
+            W = tf.get_variable("W", [self.config.emb_dim, self.config.hidden_dim])
+            U = tf.get_variable("U", [self.config.hidden_dim * self.config.degree,
+                                       self.config.hidden_dim * (3 + self.config.degree)])
+            b = tf.get_variable("b", [self.config.hidden_dim * (3 + self.config.degree)])
+            bo = tf.get_variable("bo", [self.config.hidden_dim])
 
             nodes_h_scattered = tf.TensorArray(tf.float32, size=self.tree_height, clear_after_read=False)
             nodes_h = tf.TensorArray(tf.float32, size = self.tree_height, clear_after_read=False)

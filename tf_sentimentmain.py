@@ -23,11 +23,11 @@ class Config(object):
 
     emb_dim = 300
     hidden_dim = 300
-    output_dim=None
+    output_dim = None
     degree = 2
     num_labels = 3
     num_epochs = 50
-
+    nb_hidden_layers = 0
 
     maxseqlen = None
     maxnodesize = None
@@ -46,7 +46,7 @@ def train2():
     config.dropout = 1.0
     config.reg = 0.000001
     config.emb_lr = 0.02
-    config.pretrain = True
+    config.pretrain = False
     config.pretrain_num_epochs = 50
     config.pretrain_batch_size = 100
     config.pretrain_lr = 0.05
@@ -102,7 +102,8 @@ def train2():
 
 
     train_set, dev_set, test_set = data['train'], data['dev'], data['test']
-    print 'pretrain train', len(pretrain_train_set)
+    if pretrain_test_set is not None:
+        print 'pretrain train', len(pretrain_train_set)
     print 'train', len(train_set)
     print 'dev', len(dev_set)
     print 'test', len(test_set)
@@ -141,7 +142,7 @@ def train2():
             with tf.variable_scope("Pretrain"):
                 pretrain_model = NarytreeLSTMAutoEncoder(pretrain_config)
 
-        model = nary_tree_lstm.SoftMaxNarytreeLSTM(config, pretrain_model.tree_lstm)
+        model = nary_tree_lstm.SoftMaxNarytreeLSTM(config, pretrain_model.tree_lstm if pretrain_model is not None else None)
 
         init=tf.global_variables_initializer()
         best_valid_score=0.0

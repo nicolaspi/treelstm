@@ -173,6 +173,32 @@ def parse_tree(sentence, parents, labels):
 
     return root
 
+
+def parse_linear_tree(sentence, labels):
+    nodes = {}
+    if isinstance(sentence, basestring):
+        sentence = [w for w in sentence.strip().split()]
+    prev = None
+    for i in xrange(len(sentence)):
+        while True:
+            node = tNode(i)
+            if prev is not None:
+                assert prev.idx != node.idx
+                node.add_child(prev)
+
+            if labels is not None:
+                node.label = labels[i]
+            else:
+                node.label = None
+            nodes[i] = node
+
+            if i < len(sentence):
+                node.word = sentence[i]
+            prev = node
+    root = prev
+    return root
+
+
 def BFStree(root):
     node=root
     leaves=[]

@@ -121,7 +121,7 @@ def parse_trees(sentencepath, treepath, labelpath):
             labels = None
             if fl is not None:
                 labels = fl.readline()
-                labels = [int(l) if l != '#' and l != '?' else None for l in labels.strip().split()]
+                labels = [int(l) if l[1] != '#' and l[1] != '?' else None for l in labels.strip().split()]
 
             sentence=f.readline()
             if not parentidxs or not labels or not sentence:
@@ -140,6 +140,12 @@ def parse_tree(sentence, parents, labels):
     parents = [p - 1 for p in parents]  #change to zero based
     if isinstance(sentence, basestring):
         sentence = [w for w in sentence.strip().split()]
+    # if labels is not None and len(labels) == len(sentence):
+    #     new_labels = np.empty(len(parents), dtype=int)
+    #     new_labels.fill(-1)
+    #     new_labels[:len(sentence)] = labels
+    #     labels = new_labels
+
     for i in xrange(len(parents)):
         if i not in nodes:
             idx = i

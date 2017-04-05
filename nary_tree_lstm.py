@@ -279,14 +279,14 @@ class SoftMaxNarytreeLSTM(object):
         reg_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
         regpart = tf.add_n(reg_losses)
         #regpart = tf.Print(regpart, [regpart])
-        h = self.hiddens
+        h = self.hiddens if not self.config.train_on_root else self.root_hidden
         out = tf.matmul(h, self.W) + self.b
         loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.labels, logits=out)
         return tf.reduce_sum(tf.divide(loss, tf.to_float(self.tree_lstm.batch_size))) + regpart
 
     def train(self, batch_tree, batch_labels, session):
 
-        feed_dict = {self.labels: batch_tree.labels}
+        feed_dict = {self.labels: batch_tree.labels if not self.config.train_on_root else batch_tree.root_labels}
         feed_dict.update(self.tree_lstm.get_feed_dict(batch_tree, self.config.dropout))
         ce,_,_ = session.run([self.loss, self.opt, self.embed_opt], feed_dict=feed_dict)
         #v = session.run([self.output], feed_dict=feed_dict)

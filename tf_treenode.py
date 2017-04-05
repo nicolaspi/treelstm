@@ -63,20 +63,20 @@ class tNode(object):
             self.num_leaves=1
 
     @staticmethod
-    def postOrder(root,func=None,args=None):
+    def postOrder(root, func=None, args=None):
 
         if root is None:
             return
-        tNode.postOrder(root.get_left(),func,args)
-        tNode.postOrder(root.get_right(),func,args)
+        #tNode.postOrder(root.get_left(), func, args)
+        #tNode.postOrder(root.get_right(), func, args)
 
         if args is not None:
-            func(root,args)
+            func(root, args)
         else:
             func(root)
 
     @staticmethod
-    def encodetokens(root,func):
+    def encodetokens(root, func):
         if root is None:
             return
         if root.word is None:
@@ -115,8 +115,8 @@ class tNode(object):
         if root is None:
             return labels
         if root.children:
-            labels = tNode.compute_leaf_pos(root.get_right(), labels)
-            labels = tNode.compute_leaf_pos(root.get_left(), labels)
+            labels = tNode.compute_labels(root.get_right(), labels)
+            labels = tNode.compute_labels(root.get_left(), labels)
             root.label = max(root.get_right().label, root.get_left().label)
             return labels
         else:
@@ -125,15 +125,15 @@ class tNode(object):
             return labels
 
 
-def processTree(root,funclist=None,argslist=None):
+def processTree(root, funclist=None, argslist=None):
     if funclist is None:
-        root.postOrder(root,root.get_height)
-        root.postOrder(root,root.get_num_leaves)
-        root.postOrder(root,root.get_size)
+        root.postOrder(root, root.get_height)
+        root.postOrder(root, root.get_num_leaves)
+        root.postOrder(root, root.get_size)
     else:
         #print funclist,argslist
-        for func,args in zip(funclist,argslist):
-            root.postOrder(root,func,args)
+        for func, args in zip(funclist, argslist):
+            root.postOrder(root, func, args)
 
     return root
 

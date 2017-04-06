@@ -29,10 +29,10 @@ class NarytreeLSTM(object):
                 eps = 1.0 / np.sqrt(fan_in)
                 return eps
 
-            self.U = pretrained_tree_lstm.U if pretrained_tree_lstm else tf.get_variable("U", [config.hidden_dim * config.degree , config.hidden_dim * (3 + config.degree)], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),calc_wt_init(config.hidden_dim)))
-            self.W = pretrained_tree_lstm.W if pretrained_tree_lstm else tf.get_variable("W", [config.emb_dim, config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.emb_dim),calc_wt_init(config.emb_dim)))
-            self.b = pretrained_tree_lstm.b if pretrained_tree_lstm else tf.get_variable("b", [config.hidden_dim * (3 + config.degree)], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim * (3 + config.degree)),calc_wt_init(config.hidden_dim * (3 + config.degree))))#, regularizer=tf.contrib.layers.l2_regularizer(0.0))
-            self.bo = pretrained_tree_lstm.bo if pretrained_tree_lstm else tf.get_variable("bo", [config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim), calc_wt_init(config.hidden_dim)))  # , regularizer=tf.contrib.layers.l2_regularizer(0.0))
+            self.U = tf.Variable(name="U", initial_value=pretrained_tree_lstm.U) if pretrained_tree_lstm else tf.get_variable("U", [config.hidden_dim * config.degree , config.hidden_dim * (3 + config.degree)], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),calc_wt_init(config.hidden_dim)))
+            self.W = tf.Variable(name="W", initial_value=pretrained_tree_lstm.W) if pretrained_tree_lstm else tf.get_variable("W", [config.emb_dim, config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.emb_dim),calc_wt_init(config.emb_dim)))
+            self.b = tf.Variable(name="b", initial_value=pretrained_tree_lstm.b) if pretrained_tree_lstm else tf.get_variable("b", [config.hidden_dim * (3 + config.degree)], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim * (3 + config.degree)),calc_wt_init(config.hidden_dim * (3 + config.degree))))#, regularizer=tf.contrib.layers.l2_regularizer(0.0))
+            self.bo = tf.Variable(name="bo", initial_value=pretrained_tree_lstm.bo) if pretrained_tree_lstm else tf.get_variable("bo", [config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim), calc_wt_init(config.hidden_dim)))  # , regularizer=tf.contrib.layers.l2_regularizer(0.0))
 
             #self.bf = pretrained_tree_lstm.bf if pretrained_tree_lstm else tf.get_variable("bf", [config.hidden_dim], initializer=tf.random_uniform_initializer(-calc_wt_init(config.hidden_dim),calc_wt_init(config.hidden_dim)))#, regularizer=tf.contrib.layers.l2_regularizer(0.0))
 
@@ -101,11 +101,10 @@ class NarytreeLSTM(object):
 
     def get_outputs(self):
         with tf.variable_scope("Node", reuse=True):
-            W = tf.get_variable("W", [self.config.emb_dim, self.config.hidden_dim])
-            U = tf.get_variable("U", [self.config.hidden_dim * self.config.degree,
-                                       self.config.hidden_dim * (3 + self.config.degree)])
-            b = tf.get_variable("b", [self.config.hidden_dim * (3 + self.config.degree)])
-            bo = tf.get_variable("bo", [self.config.hidden_dim])
+            W = self.W #tf.get_variable("W", [self.config.emb_dim, self.config.hidden_dim])
+            U = self.U #tf.get_variable("U", [self.config.hidden_dim * self.config.degree, self.config.hidden_dim * (3 + self.config.degree)])
+            b = self.b #tf.get_variable("b", [self.config.hidden_dim * (3 + self.config.degree)])
+            bo = self.bo #tf.get_variable("bo", [self.config.hidden_dim])
 
             nodes_h_scattered = tf.TensorArray(tf.float32, size=self.tree_height, clear_after_read=False)
             nodes_h = tf.TensorArray(tf.float32, size = self.tree_height, clear_after_read=False)

@@ -186,21 +186,20 @@ def parse_linear_tree(sentence, labels):
         sentence = [w for w in sentence.strip().split()]
     prev = None
     for i in xrange(len(sentence)):
-        while True:
-            node = tNode(i)
-            if prev is not None:
-                assert prev.idx != node.idx
-                node.add_child(prev)
+        node = tNode(i)
+        if prev is not None:
+            assert prev.idx != node.idx
+            node.add_child(prev)
 
-            if labels is not None:
-                node.label = labels[i]
-            else:
-                node.label = None
-            nodes[i] = node
+        if labels is not None:
+            node.label = labels[i]
+        else:
+            node.label = None
+        nodes[i] = node
 
-            if i < len(sentence):
-                node.word = sentence[i]
-            prev = node
+        if i < len(sentence):
+            node.word = sentence[i]
+        prev = node
     root = prev
     return root
 
@@ -280,13 +279,18 @@ def build_batch_trees(trees, mini_batch_size):
 def build_labelized_batch_trees(data, mini_batch_size):
     trees = [s[0] for s in data]
     labels = [s[1] for s in data]
+    metas = [s[2:] for s in data]
     labels_batches = []
+    metas_batches = []
     while (len(labels) > 0):
         batch = labels[-mini_batch_size:]
+        mbatch = metas[-mini_batch_size:]
         del labels[-mini_batch_size:]
+        del metas[-mini_batch_size:]
         labels_batches.append(np.array(batch))
+        metas_batches.append(np.array(mbatch))
     tree_batches = build_batch_trees(trees, mini_batch_size)
-    return zip(tree_batches, labels_batches)
+    return zip(tree_batches, labels_batches, metas_batches)
 
 
 def extract_batch_tree_data(batchdata,fillnum=120):

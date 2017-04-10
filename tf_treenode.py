@@ -115,9 +115,26 @@ class tNode(object):
         if root is None:
             return labels
         if root.children:
-            labels = tNode.compute_labels(root.get_right(), labels)
-            labels = tNode.compute_labels(root.get_left(), labels)
-            root.label = max(root.get_right().label, root.get_left().label)
+            maxc = float("-inf")
+            for c in root.children:
+                labels = tNode.compute_labels(c, labels)
+                maxc = max(maxc, c.label)
+            root.label = maxc
+            return labels
+        else:
+            assert len(labels) > 0
+            root.label = labels.pop()
+            return labels
+
+    @staticmethod
+    def compute_labels_linear(root, labels):
+        if root is None:
+            return labels
+        if root.children:
+            c = root.children[0]
+            labels = tNode.compute_labels_linear(c, labels)
+            assert len(labels) > 0
+            root.label = max(labels.pop(), c.label)
             return labels
         else:
             assert len(labels) > 0

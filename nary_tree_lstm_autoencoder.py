@@ -66,6 +66,7 @@ class NarytreeLSTMAutoEncoder(object):
         self.opt = self.optimizer.minimize(self.loss, var_list=self.training_variables)
         self.gv = self.optimizer.compute_gradients(self.loss, var_list=[self.tree_lstm.b])
         self.saver = tf.train.Saver(self.training_variables)
+        self.encoder_output = self.get_encoder_output()
 
     def save(self, sess, save_path):
         self.saver.save(sess, save_path)
@@ -95,7 +96,6 @@ class NarytreeLSTMAutoEncoder(object):
     def get_loss(self):
         self.encoder_hiddens = self.tree_lstm.get_output_unscattered()
         range = tf.range(self.start_height, self.tree_lstm.tree_height)
-        #range = tf.Print(range, [range])
         def foldfn(loss, height):
             pred, target, _ = self.get_outputs(height)
             #target = tf.Print(target, [target], "target", None, 100)
@@ -107,7 +107,8 @@ class NarytreeLSTMAutoEncoder(object):
         #loss = tf.reduce_sum(tf.square(target - pred))
         loss = tf.foldl(foldfn, range, initializer=self.const0f)
         return tf.divide(loss, tf.to_float(self.tree_lstm.batch_size))
-    def get_encoder_output(self, height):
+
+    def get_encoder_output(self):
         nodes_h = self.tree_lstm.get_output_unscattered()
         roots_h = nodes_h.read(nodes_h.size()-1)
         return roots_h
@@ -254,23 +255,40 @@ class NarytreeLSTMAutoEncoder(object):
 
     def train_epoch(self, data, session):
         total_error = 0.0
+        # using count in case data is a generator
+        count = 0
         for batch in data:
+            count+=1
             total_error += self.train(batch, session)
-        print 'average error :', total_error/len(data)
+        print 'average error :', total_error/count
 
     def test(self, data, session):
         total_error = 0.0
+        # using count in case data is a generator
+        count = 0
         for batch in data:
+            count += 1
             feed_dict = self.get_feed_dict(batch, True, self.config.dropout)
             total_error += session.run([self.loss], feed_dict=feed_dict)[0]
-        return total_error/len(data)
+        return total_error/count
+
+    def map(self, data, session):
+        result = np.zeros([self.config.hidden_dim])
+        for batch in data:
+            feed_dict = self.get_feed_dict(batch, True)
+            v = session.run([self.encoder_output], feed_dict=feed_dict)[0]
+            result = np.vstack([result,v])
+        return result[1:]
 
     def test_accuracy(self, data, session):
         total_acc = 0.0
+        # using count in case data is a generator
+        count = 0
         for batch in data:
+            count += 1
             feed_dict = self.get_feed_dict(batch, True, self.config.dropout)
             total_acc += session.run([self.accuracy], feed_dict=feed_dict)[0]
-        return total_acc / len(data)
+        return total_acc / count
 
 def test_model():
     class Config(object):

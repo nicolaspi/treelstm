@@ -4,6 +4,7 @@ from nary_tree_lstm import NarytreeLSTM
 import numpy as np
 import time
 from itertools import izip
+from collections import deque
 
 
 class NarytreeLSTMAutoEncoder(object):
@@ -273,12 +274,12 @@ class NarytreeLSTMAutoEncoder(object):
         return total_error/count
 
     def map(self, data, session):
-        result = np.zeros([self.config.hidden_dim])
+        results = deque([])
         for batch in data:
             feed_dict = self.get_feed_dict(batch, True)
             v = session.run([self.encoder_output], feed_dict=feed_dict)[0]
-            result = np.vstack([result,v])
-        return result[1:]
+            results.append(v)
+        return np.vstack(list(results))
 
     def test_accuracy(self, data, session):
         total_acc = 0.0

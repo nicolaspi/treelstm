@@ -281,6 +281,12 @@ class NarytreeLSTMAutoEncoder(object):
             results.append(v)
         return np.vstack(list(results))
 
+    def map_generator(self, data, session):
+        for batch in data:
+            feed_dict = self.get_feed_dict(batch, True)
+            v = session.run([self.encoder_output], feed_dict=feed_dict)[0]
+            yield v
+
     def test_accuracy(self, data, session):
         total_acc = 0.0
         # using count in case data is a generator

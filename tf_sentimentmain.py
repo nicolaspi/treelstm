@@ -116,7 +116,7 @@ def train2():
     with tf.Graph().as_default():
 
         #model = tf_seq_lstm.tf_seqLSTM(config)
-        model = nary_tree_lstm.SoftMaxNarytreeLSTM(config, train_set + dev_set + test_set)
+        model = nary_tree_lstm.SoftMaxNarytreeLSTM(config)
 
         init=tf.global_variables_initializer()
         best_valid_score=0.0

@@ -221,7 +221,7 @@ class NarytreeLSTM(object):
 
 class SoftMaxNarytreeLSTM(object):
 
-    def __init__(self, config, data):
+    def __init__(self, config):
         def calc_wt_init(self, fan_in=300):
             eps = 1.0 / np.sqrt(fan_in)
             return eps
@@ -403,7 +403,7 @@ def test_softmax_model():
 
     labels = np.array([0,1,0,1,0])
 
-    model = SoftMaxNarytreeLSTM(Config(), [tree])
+    model = SoftMaxNarytreeLSTM(Config())
     sess = tf.InteractiveSession()
     summarywriter = tf.summary.FileWriter('/tmp/tensortest', graph=sess.graph)
     tf.global_variables_initializer().run()

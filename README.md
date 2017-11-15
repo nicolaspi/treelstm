@@ -24,5 +24,14 @@ Usage :
   to train the model on the SST dataset with optimized model version, without argument the sapruash's version is launched.
 
 
+This is to explore using RL approach on the problem.
+
+Requirements :
+
+- Tensorflow 1.0.1
+- Python 2.7
+
+
+
 
 

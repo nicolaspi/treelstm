@@ -448,3 +448,66 @@ class tf_ChildsumtreeLSTM(tf_NarytreeLSTM):
             emb_tree,node_h,node_c,idx_var=tf.while_loop(loop_cond, _recurrence, loop_vars, parallel_iterations=1)
 
             return node_h
+
+
+def compute_tree_reward_to_go(all_node_individual_reward, tree_internal_nodes, gamma=1, child_size=2):
+
+    def filter_greater_equal(input_t, x):
+        mask = tf.greater_equal(input_t, x)
+        return tf.boolean_mask(input_t, mask)
+
+    def duplicate_element(input_t, times):
+        """
+        Eg. input: [8,9], times: 2, output: [8, 8, 9, 9]
+        """
+        return tf.reshape(tf.stack([input_t] * times, axis=1), [-1])
+
+    leave_offset = tf.shape(all_node_individual_reward)[0] - tf.shape(tree_internal_nodes)[0]
+
+    with tf.variable_scope("tree-reward-to-go"):
+
+        reward_size = tf.shape(all_node_individual_reward)[0]
+
+        individual_reward_array = tf.TensorArray(size=reward_size, dtype=tf.float32)
+        individual_reward_array = individual_reward_array.unstack(all_node_individual_reward)
+
+        to_go_reward_array = tf.TensorArray(size=reward_size, dtype=tf.float32, clear_after_read=False)
+
+        i_node_idx = tf.expand_dims(tf.shape(all_node_individual_reward)[0] - 1, 0)
+
+        def add_ancestral_rewards(parent_rewards, parent_idx):
+            # remove index of leaves
+            parent_idx = filter_greater_equal(parent_idx, leave_offset)
+
+            # read rewards of parent
+            rewards = parent_rewards.gather(parent_idx)
+            par_for_each_child = duplicate_element(rewards, child_size)
+
+            # read their children
+            children = tf.gather(tree_internal_nodes, parent_idx - leave_offset)
+            flat_child = tf.reshape(children, [-1])
+
+            # read children existing rewards
+            curr_children_rewards = individual_reward_array.gather(flat_child)
+
+            # sum parent and child
+            final_children_reward = (gamma * par_for_each_child) + curr_children_rewards
+
+            # write back to respective children
+            parent_rewards = parent_rewards.scatter(flat_child, final_children_reward)
+
+            return parent_rewards, flat_child
+
+        def condition(_, children):
+            return tf.shape(children)[0] > 0
+
+        first_rewards = individual_reward_array.gather(i_node_idx)
+        to_go_reward_array = to_go_reward_array.scatter(i_node_idx, first_rewards)
+
+        final_reward, final_index = tf.while_loop(
+            cond=condition,
+            body=add_ancestral_rewards,
+            loop_vars=(to_go_reward_array, i_node_idx),
+            shape_invariants=(tf.TensorShape(None), tf.TensorShape([None])))
+
+        return final_reward.stack()

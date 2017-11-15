@@ -1,1 +1,6 @@
 /*.pyc
+
+.gitignore
+.idea
+.ipynb*
+lib/*.class

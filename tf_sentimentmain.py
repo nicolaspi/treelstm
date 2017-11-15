@@ -43,6 +43,7 @@ def train2():
     config.dropout = 0.5
     config.reg = 0.0001
     config.emb_lr = 0.02
+    config.fine_grained = True
 
 
     import collections
@@ -50,12 +51,21 @@ def train2():
     from sklearn import metrics
 
     def test(model, data, session):
-        relevant_labels = [0, 2]
+        if config.fine_grained:
+            relevant_labels = [0, 1, 2, 3, 4]
+        else:
+            relevant_labels = [0, 2]
+
         ys_true = collections.deque([])
         ys_pred = collections.deque([])
         for batch in data:
             y_pred = model.get_output()
-            y_true = batch[0].root_labels/2
+
+            if config.fine_grained:
+                y_true = batch[0].root_labels
+            else:
+                y_true = batch[0].root_labels/2
+
             feed_dict = {model.labels: batch[0].root_labels}
             feed_dict.update(model.tree_lstm.get_feed_dict(batch[0]))
             y_pred_ = session.run([y_pred], feed_dict=feed_dict)
@@ -83,6 +93,7 @@ def train2():
 
     num_emb = len(vocab)
     num_labels = 5 if config.fine_grained else 3
+    config.num_labels = num_labels
     for _, dataset in data.items():
         labels = [label for _, label in dataset]
         assert set(labels) <= set(xrange(num_labels)), set(labels)
@@ -105,7 +116,7 @@ def train2():
     with tf.Graph().as_default():
 
         #model = tf_seq_lstm.tf_seqLSTM(config)
-        model = nary_tree_lstm.SoftMaxNarytreeLSTM(config, train_set + dev_set + test_set)
+        model = nary_tree_lstm.SoftMaxNarytreeLSTM(config)
 
         init=tf.global_variables_initializer()
         best_valid_score=0.0
@@ -149,6 +160,8 @@ def train(restore=False):
     config.reg = 0.0001
     config.dropout = 1.0
     config.emb_lr = 0.1
+    config.fine_grained = True
+
 
     train_set, dev_set, test_set = data['train'], data['dev'], data['test']
     print 'train', len(train_set)
@@ -157,6 +170,7 @@ def train(restore=False):
 
     num_emb = len(vocab)
     num_labels = 5 if config.fine_grained else 3
+    config.num_labels = num_labels
     for _, dataset in data.items():
         labels = [label for _, label in dataset]
         assert set(labels) <= set(xrange(num_labels)), set(labels)
